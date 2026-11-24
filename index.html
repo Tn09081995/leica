@@ -2,7 +2,8 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#edf6ef" />
   <title>Lumina Studio — Trình Xử Lý Ảnh Chuyên Nghiệp</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -19,17 +20,17 @@
           <span class="brand-name">LUMINA</span>
           <span class="brand-tag">STUDIO</span>
         </div>
-        <div class="divider-v"></div>
-        <label class="btn btn-secondary" for="fileInput" title="Mở ảnh từ máy tính (Ctrl+O)">
+        <div class="divider-v hide-mobile"></div>
+        <label class="btn btn-secondary btn-upload" for="fileInput" title="Mở ảnh từ máy (Ctrl+O)">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <span>Mở ảnh</span>
+          <span class="btn-label">Mở ảnh</span>
         </label>
         <input type="file" id="fileInput" accept="image/*" hidden />
 
         <div class="dropdown-wrap">
-          <button class="btn btn-ghost" id="sampleMenuBtn" type="button" title="Tải ảnh mẫu để trải nghiệm">
+          <button class="btn btn-ghost btn-sample" id="sampleMenuBtn" type="button" title="Tải ảnh mẫu để trải nghiệm">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <span>Ảnh mẫu</span>
+            <span class="btn-label">Ảnh mẫu</span>
           </button>
           <div class="dropdown-menu" id="sampleMenu">
             <button type="button" class="dropdown-item" data-sample="mountain">Hoàng hôn núi non</button>
@@ -41,17 +42,17 @@
 
       <div class="topbar-center">
         <div class="btn-group">
-          <button class="btn btn-icon" id="undoBtn" type="button" title="Hoàn tác (Ctrl+Z)" disabled>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          <button class="btn btn-icon" id="undoBtn" type="button" title="Hoàn tác (Ctrl+Z)" aria-label="Hoàn tác" disabled>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
           </button>
-          <button class="btn btn-icon" id="redoBtn" type="button" title="Làm lại (Ctrl+Y)" disabled>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
+          <button class="btn btn-icon" id="redoBtn" type="button" title="Làm lại (Ctrl+Y)" aria-label="Làm lại" disabled>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
           </button>
         </div>
 
-        <div class="divider-v"></div>
+        <div class="divider-v hide-mobile"></div>
 
-        <div class="btn-group">
+        <div class="btn-group hide-mobile">
           <button class="btn btn-ghost btn-sm" id="splitToggleBtn" type="button" title="Bật/tắt so sánh Trước & Sau" disabled>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="8 8 4 12 8 16"/><polyline points="16 8 20 12 16 16"/></svg>
             <span>So sánh</span>
@@ -61,9 +62,9 @@
           </button>
         </div>
 
-        <div class="divider-v"></div>
+        <div class="divider-v hide-mobile"></div>
 
-        <div class="zoom-controls">
+        <div class="zoom-controls hide-mobile">
           <button class="btn btn-icon btn-sm" id="zoomOutBtn" type="button" title="Thu nhỏ (-)" disabled>−</button>
           <button class="btn btn-ghost btn-sm mono" id="zoomResetBtn" type="button" title="Vừa khung hình (0)" disabled>100%</button>
           <button class="btn btn-icon btn-sm" id="zoomInBtn" type="button" title="Phóng to (+)" disabled>+</button>
@@ -75,12 +76,13 @@
           <svg id="themeIconMoon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="themeIconSun" class="hidden" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
-        <button class="btn btn-ghost" id="resetAllBtn" type="button" title="Đặt lại toàn bộ chỉnh sửa" disabled>
+        <button class="btn btn-ghost hide-mobile" id="resetAllBtn" type="button" title="Đặt lại toàn bộ chỉnh sửa" disabled>
           Đặt lại
         </button>
-        <button class="btn btn-primary" id="exportOpenBtn" type="button" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span>Xuất ảnh</span>
+        <button class="btn btn-primary btn-export" id="exportOpenBtn" type="button" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="export-text-full">Xuất ảnh</span>
+          <span class="export-text-short">Lưu</span>
         </button>
       </div>
     </header>
@@ -93,19 +95,19 @@
         <div class="empty-state" id="emptyState">
           <div class="dropzone-card" id="dropzoneCard">
             <div class="dropzone-icon">
-              <svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="3"/>
                 <circle cx="8.5" cy="8.5" r="1.5"/>
                 <polyline points="21 15 16 10 5 21"/>
               </svg>
             </div>
-            <h1>Phòng Tối Kỹ Thuật Số</h1>
-            <p>Kéo thả ảnh vào đây hoặc chọn từ máy tính. Mọi thao tác xử lý diễn ra trực tiếp trên trình duyệt — nhanh chóng và riêng tư tuyệt đối.</p>
+            <h1>Chỉnh Ảnh Nhanh & Tinh Tế</h1>
+            <p>Chọn ảnh từ thư viện hoặc kéo thả vào đây. Mọi thao tác xử lý diễn ra trực tiếp trên thiết bị — nhanh gọn và riêng tư.</p>
             <div class="empty-actions">
-              <label class="btn btn-primary btn-lg" for="fileInput">Chọn ảnh từ máy</label>
-              <button class="btn btn-secondary btn-lg" id="trySampleBtn" type="button">Thử với ảnh mẫu</button>
+              <label class="btn btn-primary btn-lg" for="fileInput">Chọn ảnh</label>
+              <button class="btn btn-secondary btn-lg" id="trySampleBtn" type="button">Thử ảnh mẫu</button>
             </div>
-            <div class="supported-formats">Hỗ trợ JPG, PNG, WebP, AVIF, BMP</div>
+            <div class="supported-formats">Hỗ trợ JPG, PNG, WebP, HEIC/AVIF</div>
           </div>
         </div>
 
@@ -141,13 +143,27 @@
             </div>
           </div>
 
-          <!-- Floating status pill -->
+          <!-- Floating quick actions bar on Mobile (Compare / Original / Reset) -->
+          <div class="mobile-stage-bar" id="mobileStageBar">
+            <button type="button" class="stage-chip" id="mobileSplitBtn" title="So sánh Trước & Sau">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="8 8 4 12 8 16"/><polyline points="16 8 20 12 16 16"/></svg>
+              <span>So sánh</span>
+            </button>
+            <button type="button" class="stage-chip" id="mobileHoldOrigBtn" title="Nhấn giữ để xem ảnh gốc">
+              <span>Giữ xem gốc</span>
+            </button>
+            <button type="button" class="stage-chip" id="mobileResetBtn" title="Đặt lại chỉnh sửa">
+              <span>Đặt lại</span>
+            </button>
+          </div>
+
+          <!-- Floating status pill (Desktop) -->
           <div class="status-pill" id="statusPill">
             <span id="imageNameLabel">image.jpg</span>
             <span class="sep">•</span>
             <span class="mono" id="imageDimLabel">0 × 0</span>
-            <span class="sep">•</span>
-            <span class="mono" id="compareHint">Giữ \ để xem gốc</span>
+            <span class="sep hide-mobile">•</span>
+            <span class="mono hide-mobile" id="compareHint">Giữ \ để xem gốc</span>
           </div>
         </div>
 
@@ -157,9 +173,9 @@
         </div>
       </section>
 
-      <!-- Right Inspector Panel -->
+      <!-- Right Inspector Panel (Desktop) / Bottom Editing Dock (Mobile) -->
       <aside class="inspector" id="inspector">
-        <!-- Live Histogram -->
+        <!-- Live Histogram (visible on desktop; hidden by default on mobile to maximize canvas space) -->
         <div class="histogram-card">
           <div class="histogram-header">
             <span class="section-eyebrow">BIỂU ĐỒ SÁNG (HISTOGRAM)</span>
@@ -168,12 +184,24 @@
           <canvas id="histogramCanvas" width="280" height="72"></canvas>
         </div>
 
-        <!-- Panel Tabs -->
+        <!-- Panel Tabs (Top of panel on Desktop, Pinned Bottom Nav on Mobile) -->
         <nav class="panel-tabs" role="tablist">
-          <button class="tab-btn active" role="tab" data-tab="presets" aria-selected="true">Bộ lọc</button>
-          <button class="tab-btn" role="tab" data-tab="adjust" aria-selected="false">Chỉnh màu</button>
-          <button class="tab-btn" role="tab" data-tab="crop" aria-selected="false">Cắt & Xoay</button>
-          <button class="tab-btn" role="tab" data-tab="frame" aria-selected="false">Khung</button>
+          <button class="tab-btn active" role="tab" data-tab="presets" aria-selected="true">
+            <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18"/><path d="M12 3v18"/><path d="M12 8l6.5-2"/><path d="M12 12l8 0"/><path d="M12 16l6.5 2"/></svg>
+            <span>Bộ lọc</span>
+          </button>
+          <button class="tab-btn" role="tab" data-tab="adjust" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            <span>Chỉnh màu</span>
+          </button>
+          <button class="tab-btn" role="tab" data-tab="crop" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></svg>
+            <span>Cắt & Xoay</span>
+          </button>
+          <button class="tab-btn" role="tab" data-tab="frame" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="7" y="7" width="10" height="8" rx="1"/></svg>
+            <span>Khung</span>
+          </button>
         </nav>
 
         <!-- Tab Panels -->
@@ -187,7 +215,7 @@
               </div>
               <div class="slider-row compact">
                 <div class="slider-label-row">
-                  <label for="presetStrength">Cường độ bộ lọc</label>
+                  <label for="presetStrength">Cường độ</label>
                   <span class="slider-val mono" id="val-presetStrength">100%</span>
                 </div>
                 <input type="range" id="presetStrength" min="0" max="100" value="100" />
@@ -198,35 +226,53 @@
 
           <!-- TAB 2: Adjustments -->
           <div class="tab-pane" id="tab-adjust">
-            <div class="panel-section">
-              <div class="section-header">
-                <h3>Ánh sáng</h3>
-                <button class="link-btn" type="button" data-reset-group="light">Đặt lại</button>
+            <!-- Mobile Simple Single-Slider Dock (shown on <= 780px) -->
+            <div class="mobile-adjust-dock" id="mobileAdjustDock">
+              <div class="mobile-active-slider-box">
+                <div class="mobile-slider-head">
+                  <span class="mobile-slider-title" id="mobileAdjTitle">Phơi sáng</span>
+                  <div class="mobile-slider-right">
+                    <span class="slider-val mono" id="mobileAdjVal">0</span>
+                    <button type="button" class="link-btn" id="mobileAdjResetSingle">Về 0</button>
+                  </div>
+                </div>
+                <input type="range" id="mobileAdjRange" min="-100" max="100" step="1" value="0" />
               </div>
-              <div class="sliders-stack" id="sliders-light"></div>
+              <div class="mobile-tool-strip" id="mobileToolStrip"></div>
             </div>
 
-            <div class="panel-section">
-              <div class="section-header">
-                <h3>Màu sắc</h3>
-                <button class="link-btn" type="button" data-reset-group="color">Đặt lại</button>
+            <!-- Desktop Full Grouped Sliders (shown on > 780px) -->
+            <div class="desktop-adjust-groups">
+              <div class="panel-section">
+                <div class="section-header">
+                  <h3>Ánh sáng</h3>
+                  <button class="link-btn" type="button" data-reset-group="light">Đặt lại</button>
+                </div>
+                <div class="sliders-stack" id="sliders-light"></div>
               </div>
-              <div class="sliders-stack" id="sliders-color"></div>
-            </div>
 
-            <div class="panel-section">
-              <div class="section-header">
-                <h3>Chi tiết & Hiệu ứng</h3>
-                <button class="link-btn" type="button" data-reset-group="detail">Đặt lại</button>
+              <div class="panel-section">
+                <div class="section-header">
+                  <h3>Màu sắc</h3>
+                  <button class="link-btn" type="button" data-reset-group="color">Đặt lại</button>
+                </div>
+                <div class="sliders-stack" id="sliders-color"></div>
               </div>
-              <div class="sliders-stack" id="sliders-detail"></div>
+
+              <div class="panel-section">
+                <div class="section-header">
+                  <h3>Chi tiết & Hiệu ứng</h3>
+                  <button class="link-btn" type="button" data-reset-group="detail">Đặt lại</button>
+                </div>
+                <div class="sliders-stack" id="sliders-detail"></div>
+              </div>
             </div>
           </div>
 
           <!-- TAB 3: Crop & Transform -->
           <div class="tab-pane" id="tab-crop">
             <div class="panel-section">
-              <div class="section-header">
+              <div class="section-header hide-mobile">
                 <h3>Xoay & Lật</h3>
               </div>
               <div class="transform-grid">
@@ -247,7 +293,7 @@
                   <span>Lật dọc</span>
                 </button>
               </div>
-              <div class="slider-row" style="margin-top: 14px;">
+              <div class="slider-row" style="margin-top: 12px;">
                 <div class="slider-label-row">
                   <label for="straighten">Căn thẳng góc</label>
                   <span class="slider-val mono" id="val-straighten">0°</span>
@@ -258,7 +304,7 @@
 
             <div class="panel-section">
               <div class="section-header">
-                <h3>Cắt khung (Crop)</h3>
+                <h3>Tỷ lệ cắt</h3>
               </div>
               <div class="aspect-pills" id="aspectPills">
                 <button type="button" class="pill active" data-aspect="free">Tự do</button>
@@ -271,9 +317,9 @@
               </div>
               <div class="crop-actions">
                 <button class="btn btn-primary" type="button" id="applyCropBtn" disabled>Áp dụng cắt</button>
-                <button class="btn btn-secondary" type="button" id="resetCropBtn" disabled>Khôi phục vùng cắt</button>
+                <button class="btn btn-secondary" type="button" id="resetCropBtn" disabled>Khôi phục</button>
               </div>
-              <p class="helper-text">Kéo các góc hoặc di chuyển khung màu đỏ trên ảnh để chọn vùng cắt.</p>
+              <p class="helper-text hide-mobile">Kéo các góc hoặc di chuyển khung trên ảnh để chọn vùng cắt.</p>
             </div>
           </div>
 
@@ -288,10 +334,10 @@
                 <button type="button" class="pill" data-frame="gallery">Gallery trắng</button>
                 <button type="button" class="pill" data-frame="dark">Phòng tối</button>
                 <button type="button" class="pill" data-frame="polaroid">Polaroid</button>
-                <button type="button" class="pill" data-frame="film">Chữ ký Studio</button>
+                <button type="button" class="pill" data-frame="film">Studio</button>
               </div>
 
-              <div class="slider-row" style="margin-top: 14px;">
+              <div class="slider-row" style="margin-top: 12px;">
                 <div class="slider-label-row">
                   <label for="frameSize">Độ dày viền</label>
                   <span class="slider-val mono" id="val-frameSize">6%</span>
@@ -299,14 +345,16 @@
                 <input type="range" id="frameSize" min="2" max="16" value="6" />
               </div>
 
-              <div class="form-field">
-                <label for="frameTitle">Tiêu đề / Chữ ký</label>
-                <input type="text" id="frameTitle" class="text-input" placeholder="VD: LUMINA STUDIO — HANOI 2026" maxlength="60" />
-              </div>
+              <div class="frame-inputs-grid">
+                <div class="form-field">
+                  <label for="frameTitle">Tiêu đề / Chữ ký</label>
+                  <input type="text" id="frameTitle" class="text-input" placeholder="VD: LUMINA — HANOI" maxlength="60" />
+                </div>
 
-              <div class="form-field">
-                <label for="frameSubtitle">Thông số phụ (EXIF / Ghi chú)</label>
-                <input type="text" id="frameSubtitle" class="text-input" placeholder="VD: 35mm • f/1.4 • 1/250s • ISO 100" maxlength="60" />
+                <div class="form-field">
+                  <label for="frameSubtitle">Ghi chú / EXIF</label>
+                  <input type="text" id="frameSubtitle" class="text-input" placeholder="VD: 35mm • f/1.4 • ISO 100" maxlength="60" />
+                </div>
               </div>
             </div>
           </div>
@@ -315,11 +363,11 @@
     </main>
   </div>
 
-  <!-- Export Modal -->
+  <!-- Export Modal (Bottom Sheet on Mobile) -->
   <div class="modal-backdrop hidden" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
     <div class="modal-card">
       <div class="modal-header">
-        <h2 id="exportTitle">Xuất ảnh chất lượng cao</h2>
+        <h2 id="exportTitle">Lưu & Xuất ảnh</h2>
         <button class="btn btn-icon btn-sm" id="exportCloseBtn" type="button" aria-label="Đóng">✕</button>
       </div>
       <div class="modal-body">
@@ -333,18 +381,18 @@
             <label for="exportFormat">Định dạng</label>
             <select id="exportFormat" class="select-input">
               <option value="image/jpeg">JPEG (.jpg)</option>
-              <option value="image/png">PNG (.png) — Không nén</option>
-              <option value="image/webp">WebP (.webp) — Nhẹ & Nét</option>
+              <option value="image/png">PNG (.png) — Nét gốc</option>
+              <option value="image/webp">WebP (.webp) — Nhẹ</option>
             </select>
           </div>
           <div class="form-field">
-            <label for="exportScale">Kích thước xuất</label>
+            <label for="exportScale">Kích thước</label>
             <select id="exportScale" class="select-input">
-              <option value="1">100% (Độ phân giải gốc)</option>
+              <option value="1">100% (Gốc)</option>
               <option value="0.75">75%</option>
               <option value="0.5">50%</option>
-              <option value="2048">Tối đa 2048px (Mạng xã hội)</option>
-              <option value="1200">Tối đa 1200px (Web)</option>
+              <option value="2048">Tối đa 2048px</option>
+              <option value="1200">Tối đa 1200px</option>
             </select>
           </div>
         </div>
@@ -359,7 +407,7 @@
 
         <div class="export-summary">
           <div>
-            <span class="muted">Kích thước đầu ra</span>
+            <span class="muted">Độ phân giải</span>
             <strong class="mono" id="exportOutDims">—</strong>
           </div>
           <div>

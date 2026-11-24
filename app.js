@@ -66,6 +66,17 @@
     slidersColor: document.getElementById('sliders-color'),
     slidersDetail: document.getElementById('sliders-detail'),
 
+    mobileStageBar: document.getElementById('mobileStageBar'),
+    mobileSplitBtn: document.getElementById('mobileSplitBtn'),
+    mobileHoldOrigBtn: document.getElementById('mobileHoldOrigBtn'),
+    mobileResetBtn: document.getElementById('mobileResetBtn'),
+
+    mobileAdjTitle: document.getElementById('mobileAdjTitle'),
+    mobileAdjVal: document.getElementById('mobileAdjVal'),
+    mobileAdjRange: document.getElementById('mobileAdjRange'),
+    mobileAdjResetSingle: document.getElementById('mobileAdjResetSingle'),
+    mobileToolStrip: document.getElementById('mobileToolStrip'),
+
     frameStylePills: document.getElementById('frameStylePills'),
     frameSize: document.getElementById('frameSize'),
     valFrameSize: document.getElementById('val-frameSize'),
@@ -135,6 +146,31 @@
   let cropDraft = { x: 0, y: 0, w: 1, h: 1 };
   let cropAspect = null; // null = free, or number (width / height in display space)
   let exportEstimateTimer = null;
+  let activeMobileTool = 'exposure';
+
+  const MOBILE_TOOLS = [
+    { key: 'exposure',    short: 'Độ sáng',    icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>' },
+    { key: 'contrast',    short: 'Tương phản', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor" stroke="none"/>' },
+    { key: 'temperature', short: 'Độ ấm',      icon: '<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>' },
+    { key: 'vibrance',    short: 'Độ tươi',    icon: '<polygon points="12 2 15 9 22 9.5 16.5 14 18.2 21 12 17.2 5.8 21 7.5 14 2 9.5 9 9 12 2"/>' },
+    { key: 'saturation',  short: 'Bão hòa',    icon: '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>' },
+    { key: 'highlights',  short: 'Vùng sáng',  icon: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 3"/>' },
+    { key: 'shadows',     short: 'Vùng tối',   icon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>' },
+    { key: 'sharpen',     short: 'Sắc nét',    icon: '<polygon points="12 3 21 19 3 19 12 3"/>' },
+    { key: 'vignette',    short: 'Tối góc',    icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="5"/>' },
+    { key: 'fade',        short: 'Phim mờ',    icon: '<path d="M3 17l6-6 4 4 8-8"/><path d="M3 21h18"/>' },
+    { key: 'grain',       short: 'Hạt phim',   icon: '<circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/><circle cx="18" cy="6" r="1.2" fill="currentColor"/><circle cx="8" cy="14" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/><circle cx="18" cy="18" r="1.2" fill="currentColor"/>' },
+    { key: 'blur',        short: 'Làm mờ',     icon: '<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="4"/>' },
+    { key: 'sepia',       short: 'Cổ điển',    icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M20 15l-5-5-9 9"/>' },
+    { key: 'tint',        short: 'Sắc thái',   icon: '<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/>' },
+    { key: 'whites',      short: 'Điểm trắng', icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>' },
+    { key: 'blacks',      short: 'Điểm đen',   icon: '<circle cx="12" cy="12" r="8" fill="currentColor" opacity="0.25"/><circle cx="12" cy="12" r="8"/>' },
+  ];
+
+  function findSliderConfig(key) {
+    const all = P.SLIDER_GROUPS.light.concat(P.SLIDER_GROUPS.color, P.SLIDER_GROUPS.detail);
+    return all.find((c) => c.key === key) || all[0];
+  }
 
   // --- Utilities ---
   function showToast(msg) {
@@ -281,6 +317,89 @@
         showToast('Đã đặt lại nhóm điều chỉnh');
       });
     });
+
+    buildMobileToolStrip();
+  }
+
+  function buildMobileToolStrip() {
+    if (!els.mobileToolStrip) return;
+    els.mobileToolStrip.innerHTML = '';
+
+    MOBILE_TOOLS.forEach((tool) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mobile-tool-btn' + (tool.key === activeMobileTool ? ' active' : '');
+      btn.dataset.toolKey = tool.key;
+      btn.innerHTML = `
+        <span class="mobile-tool-dot" aria-hidden="true"></span>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${tool.icon}</svg>
+        <span>${tool.short}</span>
+      `;
+      btn.addEventListener('click', () => {
+        selectMobileTool(tool.key);
+      });
+      els.mobileToolStrip.appendChild(btn);
+    });
+
+    if (els.mobileAdjRange) {
+      els.mobileAdjRange.addEventListener('input', () => {
+        const v = parseFloat(els.mobileAdjRange.value);
+        state.adjustments[activeMobileTool] = v;
+        els.mobileAdjVal.textContent = formatSliderValue(activeMobileTool, v);
+        // Sync desktop slider & modified dot
+        const deskInput = document.getElementById(`adj-${activeMobileTool}`);
+        const deskVal = document.getElementById(`val-${activeMobileTool}`);
+        if (deskInput) deskInput.value = String(v);
+        if (deskVal) deskVal.textContent = formatSliderValue(activeMobileTool, v);
+        updateMobileToolDots();
+        scheduleRender();
+      });
+
+      els.mobileAdjRange.addEventListener('change', () => {
+        if (sourceImage) pushHistory();
+      });
+    }
+
+    if (els.mobileAdjResetSingle) {
+      els.mobileAdjResetSingle.addEventListener('click', () => {
+        if (!sourceImage) return;
+        if (state.adjustments[activeMobileTool] !== 0) {
+          state.adjustments[activeMobileTool] = 0;
+          syncControlsFromState();
+          pushHistory();
+          scheduleRender();
+        }
+      });
+    }
+
+    selectMobileTool(activeMobileTool);
+  }
+
+  function selectMobileTool(key) {
+    activeMobileTool = key;
+    const cfg = findSliderConfig(key);
+    const meta = MOBILE_TOOLS.find((t) => t.key === key);
+    if (!cfg || !els.mobileAdjRange) return;
+
+    els.mobileAdjTitle.textContent = meta ? meta.short : cfg.label;
+    els.mobileAdjRange.min = String(cfg.min);
+    els.mobileAdjRange.max = String(cfg.max);
+    els.mobileAdjRange.step = String(cfg.step);
+    const cur = state.adjustments[key] || 0;
+    els.mobileAdjRange.value = String(cur);
+    els.mobileAdjVal.textContent = formatSliderValue(key, cur);
+
+    els.mobileToolStrip.querySelectorAll('.mobile-tool-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.toolKey === key);
+    });
+  }
+
+  function updateMobileToolDots() {
+    if (!els.mobileToolStrip) return;
+    els.mobileToolStrip.querySelectorAll('.mobile-tool-btn').forEach((b) => {
+      const k = b.dataset.toolKey;
+      b.classList.toggle('modified', Math.abs(state.adjustments[k] || 0) > 0.01);
+    });
   }
 
   function formatSliderValue(key, v) {
@@ -396,6 +515,10 @@
     els.frameStylePills.querySelectorAll('.pill').forEach((p) => {
       p.classList.toggle('active', p.dataset.frame === state.frame.style);
     });
+
+    // Sync mobile single-slider dock
+    selectMobileTool(activeMobileTool);
+    updateMobileToolDots();
   }
 
   // --- Image Loading ---
@@ -416,6 +539,7 @@
     els.emptyState.classList.add('hidden');
     els.stageContainer.classList.remove('hidden');
     els.viewport.classList.add('has-image');
+    document.body.classList.add('has-image');
 
     // Enable toolbar buttons
     [
@@ -431,6 +555,7 @@
     ].forEach((b) => (b.disabled = false));
 
     els.splitToggleBtn.classList.remove('active');
+    if (els.mobileSplitBtn) els.mobileSplitBtn.classList.remove('active');
     els.imageNameLabel.textContent = name || 'sample.jpg';
     els.exportFilename.value = `${imageFilename}-edited`;
 
@@ -540,8 +665,11 @@
   function fitCanvasToViewport() {
     if (!sourceImage) return;
     const stageRect = els.stageContainer.getBoundingClientRect();
-    const availW = Math.max(120, stageRect.width - 56);
-    const availH = Math.max(120, stageRect.height - 82);
+    const isMobile = window.innerWidth <= 780;
+    const padW = isMobile ? 24 : 56;
+    const padH = isMobile ? 58 : 82;
+    const availW = Math.max(120, stageRect.width - padW);
+    const availH = Math.max(120, stageRect.height - padH);
 
     const cw = els.previewCanvas.width || 1;
     const ch = els.previewCanvas.height || 1;
@@ -1016,29 +1144,39 @@
     els.undoBtn.addEventListener('click', undo);
     els.redoBtn.addEventListener('click', redo);
 
-    // Split Compare
-    els.splitToggleBtn.addEventListener('click', () => {
+    // Split Compare (Desktop + Mobile quick bar)
+    const toggleSplit = () => {
       if (!sourceImage) return;
       if (activeTab === 'crop') switchTab('adjust');
       splitCompare = !splitCompare;
       els.splitToggleBtn.classList.toggle('active', splitCompare);
+      if (els.mobileSplitBtn) els.mobileSplitBtn.classList.toggle('active', splitCompare);
       scheduleRender();
-    });
+    };
+    els.splitToggleBtn.addEventListener('click', toggleSplit);
+    if (els.mobileSplitBtn) els.mobileSplitBtn.addEventListener('click', toggleSplit);
 
-    // Hold to Compare Original
-    const startHold = () => {
+    // Hold to Compare Original (Desktop + Mobile quick bar)
+    const startHold = (e) => {
       if (!sourceImage) return;
+      if (e && e.cancelable) e.preventDefault();
       holdingOriginal = true;
       els.holdCompareBtn.classList.add('active');
+      if (els.mobileHoldOrigBtn) els.mobileHoldOrigBtn.classList.add('active');
       scheduleRender();
     };
     const endHold = () => {
       if (!holdingOriginal) return;
       holdingOriginal = false;
       els.holdCompareBtn.classList.remove('active');
+      if (els.mobileHoldOrigBtn) els.mobileHoldOrigBtn.classList.remove('active');
       scheduleRender();
     };
     els.holdCompareBtn.addEventListener('pointerdown', startHold);
+    if (els.mobileHoldOrigBtn) {
+      els.mobileHoldOrigBtn.addEventListener('pointerdown', startHold);
+      els.mobileHoldOrigBtn.addEventListener('pointercancel', endHold);
+    }
     window.addEventListener('pointerup', endHold);
     els.holdCompareBtn.addEventListener('pointerleave', endHold);
 
@@ -1053,6 +1191,8 @@
       document.body.dataset.theme = isDark ? 'dark' : 'light';
       els.themeIconMoon.classList.toggle('hidden', isDark);
       els.themeIconSun.classList.toggle('hidden', !isDark);
+      const themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', isDark ? '#0c0f0e' : '#edf6ef');
       try {
         localStorage.setItem('lumina-theme', isDark ? 'dark' : 'light');
       } catch (_) {}
@@ -1066,11 +1206,11 @@
     els.themeToggleBtn.addEventListener('click', () => {
       const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
       applyTheme(next);
-      showToast(next === 'dark' ? 'Đã chuyển sang chế độ Phòng tối' : 'Đã chuyển sang chế độ Sáng tự nhiên');
+      showToast(next === 'dark' ? 'Chế độ Phòng tối' : 'Chế độ Sáng tự nhiên');
     });
 
-    // Reset All
-    els.resetAllBtn.addEventListener('click', () => {
+    // Reset All (Desktop + Mobile quick bar)
+    const resetAllEdits = () => {
       if (!sourceImage) return;
       state = createDefaultState();
       cropDraft = { x: 0, y: 0, w: 1, h: 1 };
@@ -1078,7 +1218,9 @@
       pushHistory();
       scheduleRender();
       showToast('Đã đặt lại tất cả chỉnh sửa');
-    });
+    };
+    els.resetAllBtn.addEventListener('click', resetAllEdits);
+    if (els.mobileResetBtn) els.mobileResetBtn.addEventListener('click', resetAllEdits);
 
     // Tabs
     els.tabBtns.forEach((btn) => {
@@ -1229,6 +1371,11 @@
     window.addEventListener('resize', () => {
       fitCanvasToViewport();
     });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => fitCanvasToViewport());
+      ro.observe(els.stageContainer);
+    }
   }
 
   // --- Init ---
