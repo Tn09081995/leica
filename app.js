@@ -19,6 +19,9 @@
     zoomOutBtn: document.getElementById('zoomOutBtn'),
     zoomResetBtn: document.getElementById('zoomResetBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
+    themeToggleBtn: document.getElementById('themeToggleBtn'),
+    themeIconMoon: document.getElementById('themeIconMoon'),
+    themeIconSun: document.getElementById('themeIconSun'),
     resetAllBtn: document.getElementById('resetAllBtn'),
     exportOpenBtn: document.getElementById('exportOpenBtn'),
 
@@ -412,6 +415,7 @@
 
     els.emptyState.classList.add('hidden');
     els.stageContainer.classList.remove('hidden');
+    els.viewport.classList.add('has-image');
 
     // Enable toolbar buttons
     [
@@ -1042,6 +1046,28 @@
     els.zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
     els.zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.25));
     els.zoomResetBtn.addEventListener('click', () => setZoom(1));
+
+    // Theme toggle (Light botanical default / Darkroom mode)
+    const applyTheme = (theme) => {
+      const isDark = theme === 'dark';
+      document.body.dataset.theme = isDark ? 'dark' : 'light';
+      els.themeIconMoon.classList.toggle('hidden', isDark);
+      els.themeIconSun.classList.toggle('hidden', !isDark);
+      try {
+        localStorage.setItem('lumina-theme', isDark ? 'dark' : 'light');
+      } catch (_) {}
+    };
+
+    try {
+      const savedTheme = localStorage.getItem('lumina-theme');
+      if (savedTheme === 'dark') applyTheme('dark');
+    } catch (_) {}
+
+    els.themeToggleBtn.addEventListener('click', () => {
+      const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      showToast(next === 'dark' ? 'Đã chuyển sang chế độ Phòng tối' : 'Đã chuyển sang chế độ Sáng tự nhiên');
+    });
 
     // Reset All
     els.resetAllBtn.addEventListener('click', () => {
