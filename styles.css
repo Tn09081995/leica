@@ -23,8 +23,8 @@
   --slider-thumb-border: #2c7a4b;
   --hist-bg: #15231b;
   --viewport-veil: rgba(244, 250, 246, 0.22);
-  --viewport-veil-active: rgba(242, 249, 244, 0.42);
-  --canvas-shadow: 0 22px 54px rgba(20, 52, 34, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.72);
+  --viewport-veil-active: rgba(10, 14, 12, 0.86);
+  --canvas-shadow: 0 24px 64px rgba(0, 0, 0, 0.68), 0 0 0 1px rgba(255, 255, 255, 0.12);
   --card-shadow: 0 22px 54px rgba(26, 70, 44, 0.14);
   --pill-bg: rgba(255, 255, 255, 0.84);
 
@@ -63,7 +63,7 @@ body[data-theme="dark"] {
   --slider-thumb-border: #0e1411;
   --hist-bg: #0c120f;
   --viewport-veil: rgba(10, 15, 13, 0.72);
-  --viewport-veil-active: rgba(10, 14, 12, 0.82);
+  --viewport-veil-active: rgba(7, 10, 9, 0.92);
   --canvas-shadow: 0 24px 64px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.08);
   --card-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   --pill-bg: rgba(18, 24, 21, 0.86);
@@ -365,6 +365,15 @@ html, body {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  transition: background 0.35s ease;
+}
+
+body.has-image .workspace {
+  background: var(--viewport-veil-active);
+}
+
+body.has-image:not([data-theme="dark"]) .inspector {
+  background: rgba(249, 252, 250, 0.94);
 }
 
 /* Viewport */
@@ -376,11 +385,38 @@ html, body {
   justify-content: center;
   overflow: hidden;
   background: var(--viewport-veil);
-  transition: background 0.25s ease;
+  transition: background 0.35s ease, backdrop-filter 0.35s ease;
 }
 
 .viewport.has-image {
-  background: var(--viewport-veil-active);
+  background: transparent;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Keep floating pills/chips crisp and sleek over the darkened editing backdrop */
+.viewport.has-image .status-pill {
+  background: rgba(18, 24, 21, 0.82);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #b7c6bd;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.viewport.has-image .status-pill #imageNameLabel {
+  color: #f3f7f4;
+}
+
+.viewport.has-image .stage-chip {
+  background: rgba(22, 29, 25, 0.84);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #eef4f0;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+.viewport.has-image .stage-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 /* Empty State */
