@@ -6,7 +6,9 @@
     'https://generativelanguage.googleapis.com/v1/interactions',
   ];
   const MODEL_COLOR_AI = 'gemini-4-hydrogen';
+  const MODEL_COLOR_FALLBACKS = ['gemini-4-hydrogen', 'gemini-3.5-flash-lite'];
   const MODEL_IMAGE_AI = 'gemini-nano-banana-2.1';
+  const MODEL_IMAGE_FALLBACKS = ['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image'];
   const STORAGE_KEY = 'lumina-gemini-api-key';
 
   function clamp(v, min, max) {
@@ -509,20 +511,65 @@
     };
   }
 
+  function isLocalServerOrigin() {
+    try {
+      const h = window.location.hostname;
+      return (h === 'localhost' || h === '127.0.0.1') && window.location.protocol.startsWith('http');
+    } catch (_) {
+      return false;
+    }
+  }
+
   /**
-   * CORS-safe Gemini Interactions API REST call (uses ?key= query param, zero custom preflight headers,
-   * automatically falls back from v1beta -> v1 if needed).
+   * Calls Gemini Interactions API using official x-goog-api-key auth (supports both AQ.* auth keys and AIza.* keys).
+   * Uses local /api/gemini proxy automatically when running on localhost to eliminate any browser CORS issues,
+   * and falls back cleanly to direct HTTPS calls (with x-goog-api-key header, then ?key=) on GitHub Pages.
    */
   async function callGeminiInteractions(apiKey, body) {
+    const attempts = [];
+
+    if (isLocalServerOrigin()) {
+      attempts.push({
+        url: '/api/gemini',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+          'x-gemini-api-version': 'v1beta',
+        },
+      });
+      attempts.push({
+        url: '/api/gemini',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+          'x-gemini-api-version': 'v1',
+        },
+      });
+    }
+
+    for (const base of GEMINI_ENDPOINTS) {
+      attempts.push({
+        url: base,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+      });
+      attempts.push({
+        url: `${base}?key=${encodeURIComponent(apiKey)}`,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
     let lastError = null;
-    for (let i = 0; i < GEMINI_ENDPOINTS.length; i++) {
-      const url = `${GEMINI_ENDPOINTS[i]}?key=${encodeURIComponent(apiKey)}`;
+    for (let i = 0; i < attempts.length; i++) {
+      const att = attempts[i];
       try {
-        const res = await fetch(url, {
+        const res = await fetch(att.url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: att.headers,
           body: JSON.stringify(body),
         });
         const data = await res.json().catch(() => ({}));
@@ -531,16 +578,39 @@
         }
         const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
         lastError = new Error(msg);
-        // Only retry alternate API version on 404 / unsupported endpoint errors
-        if (res.status !== 404 && res.status !== 400) {
+        // Stop retrying endpoints on definitive auth/billing/quota errors (401/403/429)
+        if (res.status === 401 || res.status === 403 || res.status === 429) {
           throw lastError;
         }
       } catch (err) {
         lastError = err;
-        if (i === GEMINI_ENDPOINTS.length - 1) throw lastError;
+        if (err && /API key|quota|billing|permission|403|401|429/i.test(err.message || '')) {
+          throw err;
+        }
       }
     }
     throw lastError || new Error('Không thể kết nối tới Google Gemini API');
+  }
+
+  /**
+   * Calls Gemini across an ordered list of preferred + fallback models (great for Free tier!).
+   */
+  async function callWithModelFallback(apiKey, models, bodyBuilder) {
+    let lastError = null;
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      try {
+        const data = await callGeminiInteractions(apiKey, bodyBuilder(model));
+        return { data, model };
+      } catch (err) {
+        lastError = err;
+        // On invalid key, fail fast without trying other models
+        if (err && /API key not valid|invalid api key|401/i.test(err.message || '')) {
+          throw err;
+        }
+      }
+    }
+    throw lastError || new Error('Không gọi được model Gemini');
   }
 
   /**
@@ -589,12 +659,12 @@
   async function testGeminiConnection(apiKey) {
     const cleaned = (apiKey || '').trim();
     if (!cleaned) throw new Error('Vui lòng dán Gemini API Key trước');
-    const data = await callGeminiInteractions(cleaned, {
-      model: MODEL_COLOR_AI,
+    const { data, model } = await callWithModelFallback(cleaned, MODEL_COLOR_FALLBACKS, (m) => ({
+      model: m,
       input: 'Reply with OK',
-    });
+    }));
     const parsed = parseInteractionResponse(data);
-    return parsed.text || 'OK';
+    return `${parsed.text || 'OK'} (${model})`;
   }
 
   /**
@@ -623,13 +693,13 @@
       `Yêu cầu người dùng: "${prompt}"`,
     ].join('\n');
 
-    const data = await callGeminiInteractions(apiKey, {
-      model: MODEL_COLOR_AI,
+    const { data } = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
+      model: m,
       input: [
         { type: 'text', text: systemPrompt },
         { type: 'image', mime_type: img.mime_type, data: img.data },
       ],
-    });
+    }));
 
     const parsed = parseInteractionResponse(data);
     let rawJson = parsed.text;
@@ -696,23 +766,23 @@
       `User request: ${prompt}`,
     ].join('\n');
 
-    const body = {
-      model: MODEL_IMAGE_AI,
-      input: [
-        { type: 'text', text: instruction },
-        { type: 'image', mime_type: img.mime_type, data: img.data },
-      ],
-      response_format: [
-        { type: 'text' },
-        { type: 'image' },
-      ],
-    };
-
-    if (previousInteractionId) {
-      body.previous_interaction_id = previousInteractionId;
-    }
-
-    const data = await callGeminiInteractions(apiKey, body);
+    const { data } = await callWithModelFallback(apiKey, MODEL_IMAGE_FALLBACKS, (m) => {
+      const b = {
+        model: m,
+        input: [
+          { type: 'text', text: instruction },
+          { type: 'image', mime_type: img.mime_type, data: img.data },
+        ],
+        response_format: [
+          { type: 'text' },
+          { type: 'image' },
+        ],
+      };
+      if (previousInteractionId && m === MODEL_IMAGE_AI) {
+        b.previous_interaction_id = previousInteractionId;
+      }
+      return b;
+    });
     const parsed = parseInteractionResponse(data);
     if (!parsed.image || !parsed.image.data) {
       throw new Error(parsed.text || 'Gemini không trả về ảnh kết quả cho yêu cầu này. Hãy thử mô tả cụ thể hơn.');
