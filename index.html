@@ -232,6 +232,7 @@
 
               <div class="ai-chips" id="aiQuickChips">
                 <button type="button" class="ai-chip" data-prompt="Đẹp tự nhiên, cân bằng sáng và màu chuẩn">✨ Đẹp tự nhiên</button>
+                <button type="button" class="ai-chip" data-prompt="Xóa phông làm mờ nền nhẹ và tôn da sáng hồng">🫧 Xóa phông nền</button>
                 <button type="button" class="ai-chip" data-prompt="Chỉnh màu Hàn Quốc trong trẻo, trắng hồng da nhẹ nhàng">🌸 Trắng hồng Hàn Quốc</button>
                 <button type="button" class="ai-chip" data-prompt="Chỉnh màu Leica Chrome tương phản sâu, ấm nhẹ">🎞️ Leica Chrome</button>
                 <button type="button" class="ai-chip" data-prompt="Cứu ảnh ngược sáng bị tối, nâng vùng tối và làm sắc nét">☁️ Cứu ảnh tối</button>
@@ -563,9 +564,11 @@
         <p class="ai-modal-note">
           Lấy khóa miễn phí tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. Khóa chỉ lưu trong trình duyệt của bạn và gọi trực tiếp tới Google Gemini API.
         </p>
+        <div class="ai-test-status hidden" id="aiKeyTestStatus"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" type="button" id="aiKeyClearBtn">Xóa khóa</button>
+        <button class="btn btn-secondary" type="button" id="aiKeyTestBtn">Kiểm tra</button>
         <button class="btn btn-primary" type="button" id="aiKeySaveBtn">Lưu kết nối</button>
       </div>
     </div>

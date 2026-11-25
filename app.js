@@ -135,6 +135,8 @@
     aiConfigCloseBtn: document.getElementById('aiConfigCloseBtn'),
     aiApiKeyInput: document.getElementById('aiApiKeyInput'),
     aiKeyClearBtn: document.getElementById('aiKeyClearBtn'),
+    aiKeyTestBtn: document.getElementById('aiKeyTestBtn'),
+    aiKeyTestStatus: document.getElementById('aiKeyTestStatus'),
     aiKeySaveBtn: document.getElementById('aiKeySaveBtn'),
   };
 
@@ -205,6 +207,7 @@
     { key: 'clarity',     short: 'Trong trẻo', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' },
     { key: 'dehaze',      short: 'Khử sương',  icon: '<path d="M3 15h18M5 11h14M7 7h10M9 19h6"/>' },
     { key: 'glow',        short: 'Sáng mơ',    icon: '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8" stroke-dasharray="2 3"/>' },
+    { key: 'bokeh',       short: 'Xóa phông',  icon: '<circle cx="12" cy="11" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/><circle cx="5" cy="6" r="1.3"/><circle cx="19" cy="7" r="1.5"/>' },
     { key: 'highlights',  short: 'Vùng sáng',  icon: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 3"/>' },
     { key: 'shadows',     short: 'Vùng tối',   icon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>' },
     { key: 'saturation',  short: 'Bão hòa',    icon: '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>' },
@@ -1896,6 +1899,7 @@
   function openAiConfigModal() {
     if (!els.aiConfigModal) return;
     els.aiApiKeyInput.value = AI.getApiKey();
+    if (els.aiKeyTestStatus) els.aiKeyTestStatus.classList.add('hidden');
     els.aiConfigModal.classList.remove('hidden');
   }
 
@@ -1913,7 +1917,10 @@
     }
 
     const apiKey = AI.getApiKey();
-    const useGenerative = forceGenerative || aiMode === 'generative';
+    const wantsGen = AI.looksLikeGenerativeEdit(prompt);
+    // Smart auto-routing: if user has a Gemini API key and types a generative edit ("xóa người", "đổi nền"...)
+    // automatically use Gemini Nano Banana 2.1 even if they didn't manually flip the toggle!
+    const useGenerative = forceGenerative || aiMode === 'generative' || (Boolean(apiKey) && wantsGen);
 
     // Generative pixel editing mode (Gemini Nano Banana 2.1)
     if (useGenerative) {
@@ -1923,6 +1930,7 @@
         return;
       }
 
+      setAiMode('generative');
       setAiBusy(true);
       setAiReply('Gemini AI (Nano Banana 2.1) đang biến đổi bức ảnh theo yêu cầu của bạn...', 'loading');
       try {
@@ -1958,8 +1966,7 @@
     }
 
     // Color & Smart Grading AI Mode
-    // If Gemini API Key is connected, use Gemini 4 Hydrogen visual grading; otherwise instant built-in Vietnamese AI!
-    if (apiKey && !AI.looksLikeGenerativeEdit(prompt)) {
+    if (apiKey && !wantsGen) {
       setAiBusy(true);
       setAiReply('Gemini AI đang quan sát ảnh và cân chỉnh màu sắc theo yêu cầu...', 'loading');
       try {
@@ -1987,7 +1994,7 @@
           pushHistory();
           scheduleRender();
         }
-        setAiReply(`(Chuyển về AI tức thì do lỗi Gemini: ${err.message}) — ${fallback.message}`, 'error');
+        setAiReply(`(Đã dùng AI tức thì do lỗi Gemini: ${err.message}) — ${fallback.message}`, 'error');
         setAiBusy(false);
         return;
       }
@@ -1997,7 +2004,7 @@
     const res = AI.runLocalSmartAI(prompt, state, sourceImage, P);
     if (res.needsGeminiImage) {
       setAiReply(res.message, 'error');
-      showToast('Mở cài đặt Gemini API để dùng biến đổi ảnh tạo sinh');
+      openAiConfigModal();
       return;
     }
     if (res.changed) {
@@ -2046,6 +2053,23 @@
         closeAiConfigModal();
         const hasKey = Boolean(AI.getApiKey());
         showToast(hasKey ? 'Đã kết nối Gemini AI thành công!' : 'Đã chuyển sang chế độ AI tức thì miễn phí');
+      });
+    }
+    if (els.aiKeyTestBtn) {
+      els.aiKeyTestBtn.addEventListener('click', async () => {
+        const key = (els.aiApiKeyInput.value || '').trim();
+        els.aiKeyTestStatus.classList.remove('hidden', 'is-error');
+        els.aiKeyTestStatus.textContent = 'Đang kiểm tra kết nối tới Google Gemini API...';
+        els.aiKeyTestBtn.disabled = true;
+        try {
+          await AI.testGeminiConnection(key);
+          els.aiKeyTestStatus.textContent = '✅ Kết nối Gemini AI thành công! Hãy bấm "Lưu kết nối".';
+        } catch (err) {
+          els.aiKeyTestStatus.classList.add('is-error');
+          els.aiKeyTestStatus.textContent = `❌ Lỗi kết nối: ${err.message || err}`;
+        } finally {
+          els.aiKeyTestBtn.disabled = false;
+        }
       });
     }
     if (els.aiKeyClearBtn) {

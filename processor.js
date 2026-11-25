@@ -84,6 +84,7 @@
     vignette: 0,     // -100..100
     grain: 0,        // 0..100
     fade: 0,         // 0..100
+    bokeh: 0,        // 0..100 (VIP Portrait / Background Blur)
     blur: 0,         // 0..20
     sepia: 0,        // 0..100
   };
@@ -109,6 +110,7 @@
       { key: 'dehaze',   label: 'Khử sương mù (Dehaze)',  min: -100, max: 100, step: 1 },
       { key: 'sharpen',  label: 'Độ sắc nét',             min: 0,    max: 100, step: 1 },
       { key: 'glow',     label: 'Ánh sáng mơ (Pro Mist)', min: 0,    max: 100, step: 1 },
+      { key: 'bokeh',    label: 'Xóa phông nền (Bokeh)',  min: 0,    max: 100, step: 1 },
       { key: 'vignette', label: 'Làm tối góc',            min: -100, max: 100, step: 1 },
       { key: 'grain',    label: 'Hạt phim hữu cơ',        min: 0,    max: 100, step: 1 },
       { key: 'fade',     label: 'Phim mờ (Fade)',         min: 0,    max: 100, step: 1 },
@@ -571,6 +573,7 @@
     out.dehaze = clamp(out.dehaze, -100, 100);
     out.sharpen = clamp(out.sharpen, 0, 120);
     out.glow = clamp(out.glow, 0, 100);
+    out.bokeh = clamp(out.bokeh, 0, 100);
     out.blur = clamp(out.blur, 0, 24);
     out.vignette = clamp(out.vignette, -100, 100);
     out.grain = clamp(out.grain, 0, 100);
@@ -1314,6 +1317,34 @@
     const imgData = wctx.getImageData(0, 0, work.width, work.height);
     processPixels(imgData, params, blurredData);
     wctx.putImageData(imgData, 0, 0);
+
+    // Portrait Background Blur (Bokeh): keeps center subject crisp while softly blurring outer background
+    if (params.bokeh > 0.5) {
+      const bokehRadius = Math.max(2, (params.bokeh / 100) * (Math.min(work.width, work.height) * 0.022));
+      const blurLayer = document.createElement('canvas');
+      blurLayer.width = work.width;
+      blurLayer.height = work.height;
+      const bctx = blurLayer.getContext('2d');
+      bctx.filter = `blur(${bokehRadius.toFixed(1)}px)`;
+      bctx.drawImage(work, 0, 0);
+      bctx.filter = 'none';
+
+      // Punch a soft feathered elliptical window in the blurred overlay so the subject stays sharp
+      bctx.globalCompositeOperation = 'destination-out';
+      const cx = work.width * 0.5;
+      const cy = work.height * 0.46;
+      const innerR = Math.min(work.width, work.height) * 0.24;
+      const outerR = Math.max(work.width, work.height) * 0.56;
+      const grad = bctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(0.55, 'rgba(0,0,0,0.68)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      bctx.fillStyle = grad;
+      bctx.fillRect(0, 0, work.width, work.height);
+      bctx.globalCompositeOperation = 'source-over';
+
+      wctx.drawImage(blurLayer, 0, 0);
+    }
 
     const finalCanvas = includeFrame ? applyFrame(work, state.frame) : work;
     const finalOriginal = includeFrame && originalCanvas ? applyFrame(originalCanvas, state.frame) : originalCanvas;

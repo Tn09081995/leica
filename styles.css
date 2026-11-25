@@ -997,6 +997,22 @@ body.has-image:not([data-theme="dark"]) .inspector {
   text-decoration: underline;
 }
 
+.ai-test-status {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid var(--border);
+}
+
+.ai-test-status.is-error {
+  background: rgba(224, 60, 49, 0.12);
+  color: #e03c31;
+  border-color: rgba(224, 60, 49, 0.32);
+}
+
 .tab-icon {
   display: block;
 }

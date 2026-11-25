@@ -1,7 +1,10 @@
 (function (global) {
   'use strict';
 
-  const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1/interactions';
+  const GEMINI_ENDPOINTS = [
+    'https://generativelanguage.googleapis.com/v1beta/interactions',
+    'https://generativelanguage.googleapis.com/v1/interactions',
+  ];
   const MODEL_COLOR_AI = 'gemini-4-hydrogen';
   const MODEL_IMAGE_AI = 'gemini-nano-banana-2.1';
   const STORAGE_KEY = 'lumina-gemini-api-key';
@@ -27,6 +30,11 @@
     return keywords.some((kw) => text.includes(kw));
   }
 
+  function extractNumberNear(text, fallback) {
+    const m = text.match(/(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : fallback;
+  }
+
   function getApiKey() {
     try {
       return (localStorage.getItem(STORAGE_KEY) || '').trim();
@@ -44,22 +52,30 @@
   }
 
   /**
-   * Detects whether a prompt asks for generative pixel edits (remove objects, swap background, add elements)
-   * versus color/light/crop/frame adjustments.
+   * Detects whether a prompt asks for true generative pixel edits (remove objects/people, replace background,
+   * change outfit, add objects, redraw style) — carefully excluding local effects like "xóa phông / mờ nền".
    */
   function looksLikeGenerativeEdit(prompt) {
     const t = normalizeVi(prompt);
+    if (hasAny(t, ['xoa phong', 'mo nen', 'mo hau canh', 'lam mo nen', 'bokeh'])) {
+      // Portrait background blur works locally without generative redraw!
+      if (!hasAny(t, ['doi nen', 'thay nen', 'xoa nguoi', 'xoa vat', 'tach nen'])) {
+        return false;
+      }
+    }
     return hasAny(t, [
       'xoa nguoi', 'xoa vat', 'xoa nen', 'tach nen', 'doi nen', 'thay nen', 'xoa rac', 'xoa chi tiet',
-      'them may', 'them nang', 'them tuyet', 'them mua', 'them hoa', 'them nguoi', 'doi ao', 'doi vay',
-      'doi trang phuc', 'doi toc', 'trang diem', 'cuoi len', 'bien thanh', 'tranh ve', 'anime', 'hoat hinh',
-      'son dau', 'cyberpunk', 'remove', 'replace background', 'change background', 'add ', 'outfit', 'inpaint',
+      'xoa chu', 'xoa logo', 'xoa day dien', 'xoa mun', 'xoa kinh',
+      'them may', 'them nang', 'them tuyet', 'them mua', 'them hoa', 'them nguoi', 'them bau troi',
+      'doi ao', 'doi vay', 'doi quan', 'doi trang phuc', 'doi toc', 'mac ao', 'trang diem', 'cuoi len',
+      'bien thanh', 'tranh ve', 'anime', 'hoat hinh', 'son dau', 'phac hoa', 'cyberpunk', 'ghibli',
+      'remove', 'erase', 'replace background', 'change background', 'add ', 'outfit', 'inpaint',
     ]);
   }
 
   /**
    * Built-in Instant AI Photo Assistant (Zero API Key required!).
-   * Understands natural Vietnamese & English editing instructions + combines real photo histogram analysis.
+   * Understands natural Vietnamese & English instructions, scenes, HSL fixes, portrait bokeh, crop, frames & numbers.
    */
   function runLocalSmartAI(prompt, currentState, sourceImage, Processor) {
     const raw = (prompt || '').trim();
@@ -73,16 +89,13 @@
 
     // Intensity modifier ("mạnh / nhiều / đậm" vs "nhẹ / chút / ít")
     let mult = 1.0;
-    if (hasAny(t, ['nhe', 'chut', 'it thoi', 'vua phai', 'subtle', 'slight', 'a bit'])) mult = 0.6;
-    if (hasAny(t, ['manh', 'nhieu', 'dam', 'cuc ', 'rat ', 'strong', 'heavy', 'more'])) mult = 1.45;
+    if (hasAny(t, ['nhe', 'chut', 'it thoi', 'vua phai', 'so qua', 'subtle', 'slight', 'a bit'])) mult = 0.6;
+    if (hasAny(t, ['manh', 'nhieu', 'dam', 'cuc ', 'rat ', 'toi da', 'strong', 'heavy', 'more'])) mult = 1.45;
+
+    const explicitNum = extractNumberNear(t, null);
 
     const bumpAdj = (key, delta, min = -100, max = 100) => {
       next.adjustments[key] = Math.round(clamp((next.adjustments[key] || 0) + delta * mult, min, max));
-    };
-
-    const setAdjIfHigher = (key, target, min = -100, max = 100) => {
-      const scaled = Math.round(clamp(target * mult, min, max));
-      next.adjustments[key] = scaled;
     };
 
     const bumpHsl = (ch, prop, delta) => {
@@ -106,14 +119,97 @@
       };
     }
 
-    // --- 1. Auto Enhance / Smart Beautiful ---
-    if (hasAny(t, ['tu dong', 'dep tu nhien', 'can bang', 'chinh dep', 'toi uu', 'auto', 'enhance', 'sua dep'])) {
+    // --- 1. Auto Enhance ---
+    if (hasAny(t, ['tu dong', 'dep tu nhien', 'can bang', 'chinh dep', 'toi uu', 'auto', 'enhance', 'sua dep', 'lam dep anh'])) {
       const auto = Processor.analyzeAutoEnhance(sourceImage);
       Object.assign(next.adjustments, auto);
       actions.push('tự động cân bằng sáng, tương phản & màu chuẩn');
     }
 
-    // --- 2. Style / Preset Matching ---
+    // --- 2. Scene / Mood Recipes (Food, Cafe, Beach, Landscape, Portrait, Night, Luxury, Moody) ---
+    if (hasAny(t, ['do an', 'mon an', 'am thuc', 'food'])) {
+      next.adjustments.temperature = Math.round(clamp((next.adjustments.temperature || 0) + 14 * mult, -100, 100));
+      next.adjustments.vibrance = Math.round(clamp((next.adjustments.vibrance || 0) + 24 * mult, -100, 100));
+      next.adjustments.clarity = Math.round(clamp((next.adjustments.clarity || 0) + 20 * mult, -100, 100));
+      next.adjustments.sharpen = Math.round(clamp((next.adjustments.sharpen || 0) + 20 * mult, 0, 100));
+      next.adjustments.highlights = Math.round(clamp((next.adjustments.highlights || 0) - 10 * mult, -100, 100));
+      bumpHsl('orange', 's', 14);
+      bumpHsl('red', 's', 16);
+      actions.push('tối ưu màu ảnh đồ ăn ấm ngon & sắc nét');
+    }
+
+    if (hasAny(t, ['cafe', 'ca phe', 'tra sua', 'tiem banh', 'quan nuoc'])) {
+      next.presetId = 'portra_400';
+      next.presetStrength = 100;
+      bumpAdj('temperature', 12);
+      bumpAdj('fade', 12, 0, 100);
+      actions.push('chỉnh tông ảnh quán cafe ấm dịu kiểu phim');
+    }
+
+    if (hasAny(t, ['di bien', 'bai bien', 'du lich bien', 'beach'])) {
+      next.presetId = 'leica_eternal';
+      next.presetStrength = 90;
+      bumpHsl('aqua', 's', 26);
+      bumpHsl('blue', 's', 22);
+      bumpHsl('blue', 'l', -10);
+      bumpAdj('exposure', 10);
+      bumpAdj('dehaze', 14);
+      actions.push('tối ưu ảnh biển xanh trong & sáng rạng rỡ');
+    }
+
+    if (hasAny(t, ['phong canh', 'thien nhien', 'nui non', 'du lich', 'landscape'])) {
+      next.presetId = 'leica_eternal';
+      next.presetStrength = 100;
+      bumpAdj('clarity', 16);
+      bumpAdj('dehaze', 16);
+      bumpAdj('sharpen', 16, 0, 100);
+      actions.push('tối ưu ảnh phong cảnh trong trẻo & sâu màu');
+    }
+
+    if (hasAny(t, ['chan dung', 'selfie', 'chup nguoi', 'portrait']) && !hasAny(t, ['film', 'portra'])) {
+      bumpAdj('skinGlow', 40, 0, 100);
+      bumpAdj('shadows', 16);
+      bumpAdj('highlights', -12);
+      bumpAdj('bokeh', 35, 0, 100);
+      bumpHsl('orange', 'l', 14);
+      actions.push('tối ưu ảnh chân dung tôn da sáng mịn & xóa phông nhẹ');
+    }
+
+    if (hasAny(t, ['chup dem', 'ban dem', 'anh dem', 'low light'])) {
+      bumpAdj('shadows', 30);
+      bumpAdj('highlights', -20);
+      bumpAdj('dehaze', 14);
+      bumpAdj('vibrance', 16);
+      actions.push('tối ưu ảnh chụp đêm (nâng vùng tối & giảm chói đèn)');
+    }
+
+    if (hasAny(t, ['sang trong', 'quy phai', 'tap chi', 'chau au', 'phong cach tay', 'editorial'])) {
+      next.presetId = 'leica_chrome';
+      next.presetStrength = 100;
+      bumpAdj('saturation', -10);
+      bumpAdj('clarity', 14);
+      bumpAdj('vignette', 16);
+      actions.push('chỉnh tông sang trọng chuẩn tạp chí Leica');
+    }
+
+    if (hasAny(t, ['tram buon', 'tam trang', 'moody', 'u buon', 'lanh leo'])) {
+      next.presetId = 'fuji_classic_chrome';
+      next.presetStrength = 100;
+      bumpAdj('temperature', -14);
+      bumpAdj('saturation', -18);
+      bumpAdj('fade', 18, 0, 100);
+      bumpAdj('vignette', 24);
+      actions.push('chỉnh tông trầm buồn moody');
+    }
+
+    if (hasAny(t, ['trong veo', 'tinh khiet', 'nhe nhang', 'tho mong'])) {
+      next.presetId = 'korean_airy';
+      next.presetStrength = 90;
+      bumpAdj('clarity', 8);
+      actions.push('chỉnh tông trong veo nhẹ nhàng');
+    }
+
+    // --- 3. Style / Preset Matching ---
     const presetRules = [
       { id: 'leica_chrome',       label: 'Leica Chrome',       keys: ['leica chrome', 'kodachrome', 'leica vip'] },
       { id: 'leica_contemporary', label: 'Leica Contemporary', keys: ['leica contemporary', 'hien dai', 'toi gian'] },
@@ -122,57 +218,74 @@
       { id: 'leica_classic',      label: 'Leica Classic',      keys: ['leica', 'mau leica'] },
       { id: 'fuji_classic_chrome',label: 'Fuji Classic Chrome',keys: ['fuji chrome', 'classic chrome', 'phong su', 'duong pho'] },
       { id: 'fuji_classic_neg',   label: 'Fuji Classic Neg',   keys: ['fuji neg', 'classic neg', 'fuji'] },
-      { id: 'korean_airy',        label: 'Hàn Quốc Trong Trẻo',keys: ['han quoc', 'korean', 'pastel', 'trong treo nhe'] },
+      { id: 'korean_airy',        label: 'Hàn Quốc Trong Trẻo',keys: ['han quoc', 'korean', 'pastel'] },
       { id: 'japan_fresh',        label: 'Nhật Bản Thanh Lịch',keys: ['nhat ban', 'japan', 'xanh ngoc', 'thanh lich'] },
       { id: 'portra_400',         label: 'Kodak Portra 400',   keys: ['portra', 'chan dung film', 'film chan dung'] },
       { id: 'kodak_gold',         label: 'Kodak Gold 200',     keys: ['kodak gold', 'nang vang', 'gio vang', 'hoang hon', 'golden'] },
       { id: 'teal_orange',        label: 'Cine Teal & Orange', keys: ['dien anh', 'cinematic', 'teal', 'hollywood', 'phim chieu rap'] },
       { id: 'saigon_vintage',     label: 'Sài Gòn Vintage',    keys: ['sai gon', 'vintage', 'hoai niem', 'retro', 'co dien', 'mau film', 'mau phim'] },
-      { id: 'tokyo_night',        label: 'Đêm Tokyo Neon',     keys: ['tokyo', 'neon', 'anh dem', 'pho dem', 'night'] },
+      { id: 'tokyo_night',        label: 'Đêm Tokyo Neon',     keys: ['tokyo', 'neon', 'pho dem'] },
     ];
 
     for (const rule of presetRules) {
       if (hasAny(t, rule.keys)) {
         next.presetId = rule.id;
-        next.presetStrength = Math.round(clamp(100 * (mult < 1 ? 0.72 : 1), 40, 100));
+        next.presetStrength = hasAny(t, ['cuong do']) && explicitNum !== null
+          ? Math.round(clamp(explicitNum, 0, 100))
+          : 100;
         actions.push(`áp dụng màu ${rule.label}`);
         break;
       }
     }
 
-    // --- 3. Backlit / Dark Rescue ("cứu ảnh tối / ngược sáng") ---
-    if (hasAny(t, ['nguoc sang', 'cuu anh toi', 'cuu toi', 'bi toi', 'toi qua', 'mo qua', 'underexposed'])) {
+    // Preset strength only request ("cường độ 60%")
+    if (hasAny(t, ['cuong do', 'do dam bo loc']) && explicitNum !== null && actions.length === 0) {
+      next.presetStrength = Math.round(clamp(explicitNum, 0, 100));
+      actions.push(`đặt cường độ bộ lọc ${next.presetStrength}%`);
+    }
+
+    // --- 4. Portrait Background Blur (Bokeh) ---
+    if (hasAny(t, ['xoa phong', 'mo nen', 'mo hau canh', 'lam mo nen', 'lam mo phia sau', 'bokeh'])) {
+      const amt = explicitNum !== null && explicitNum <= 100 ? explicitNum : Math.round(clamp(55 * mult, 15, 100));
+      next.adjustments.bokeh = Math.round(clamp(amt, 0, 100));
+      actions.push(`xóa phông làm mờ nền (${next.adjustments.bokeh}%)`);
+    }
+
+    // --- 5. Backlit / Dark Rescue ---
+    if (hasAny(t, ['nguoc sang', 'cuu anh toi', 'cuu toi', 'bi toi', 'toi qua', 'underexposed'])) {
       const auto = Processor.analyzeAutoEnhance(sourceImage);
-      next.adjustments.exposure = Math.round(clamp(Math.max(auto.exposure, 18) * mult, -100, 100));
-      next.adjustments.shadows = Math.round(clamp(44 * mult, 0, 100));
+      next.adjustments.exposure = Math.round(clamp(Math.max(auto.exposure, 20) * mult, -100, 100));
+      next.adjustments.shadows = Math.round(clamp(46 * mult, 0, 100));
       next.adjustments.highlights = Math.round(clamp(-24 * mult, -100, 0));
       next.adjustments.clarity = Math.round(clamp(14 * mult, 0, 100));
       next.adjustments.sharpen = Math.round(clamp(16 * mult, 0, 100));
       actions.push('cứu sáng vùng tối & giữ chi tiết vùng sáng');
     }
 
-    // --- 4. Skin / Portrait Glow ---
-    if (hasAny(t, ['trang da', 'sang da', 'hong da', 'ton da', 'min da', 'lam dep da', 'da dep', 'skin', 'chan dung dep'])) {
+    // --- 6. Skin Glow ---
+    if (hasAny(t, ['trang da', 'sang da', 'hong da', 'ton da', 'min da', 'lam dep da', 'da dep', 'skin', 'trang hong'])) {
       bumpAdj('skinGlow', 45, 0, 100);
       bumpHsl('orange', 'l', 16);
       bumpHsl('orange', 's', -8);
-      bumpAdj('glow', 14, 0, 100);
+      bumpAdj('glow', 12, 0, 100);
       actions.push('tôn da sáng hồng & làm mềm ánh sáng');
     }
 
-    // --- 5. Exposure / Brightness ---
+    // --- 7. Exposure / Brightness ---
     if (hasAny(t, ['giam sang', 'toi hon', 'toi di', 'ha sang', 'bot choi', 'bot sang', 'darker', 'dim'])) {
-      bumpAdj('exposure', -20);
+      const step = explicitNum !== null && explicitNum <= 100 ? -explicitNum : -22;
+      bumpAdj('exposure', step);
       if (hasAny(t, ['choi', 'chay sang'])) bumpAdj('highlights', -35);
       actions.push('giảm độ sáng');
     } else if (hasAny(t, ['lam sang', 'sang hon', 'tang sang', 'sang len', 'brighter', 'brighten'])) {
-      bumpAdj('exposure', 22);
+      const step = explicitNum !== null && explicitNum <= 100 ? explicitNum : 22;
+      bumpAdj('exposure', step);
       actions.push('tăng độ sáng (EV)');
     }
 
-    // --- 6. Highlights & Shadows ---
+    // --- 8. Highlights & Shadows ---
     if (hasAny(t, ['giam vung sang', 'cuu chay sang', 'bot chay', 'ha vung sang'])) {
-      bumpAdj('highlights', -35);
+      bumpAdj('highlights', -36);
       actions.push('giảm chói vùng sáng');
     } else if (hasAny(t, ['tang vung sang'])) {
       bumpAdj('highlights', 28);
@@ -186,17 +299,26 @@
       actions.push('làm sâu vùng tối');
     }
 
-    // --- 7. Contrast ---
+    // --- 9. Contrast ---
     if (hasAny(t, ['giam tuong phan', 'diu hon', 'mem mai', 'bot gat', 'low contrast'])) {
-      bumpAdj('contrast', -20);
+      bumpAdj('contrast', -22);
       actions.push('làm dịu tương phản');
     } else if (hasAny(t, ['tang tuong phan', 'tuong phan', 'noi khoi', 'contrast'])) {
-      bumpAdj('contrast', 24);
+      const step = explicitNum !== null && explicitNum <= 100 ? explicitNum : 24;
+      bumpAdj('contrast', step);
       actions.push('tăng tương phản sâu');
     }
 
-    // --- 8. Temperature & Tint ---
-    if (hasAny(t, ['am ap', 'am hon', 'tang am', 'tong am', 'mau am', 'vang hon', 'warmer', 'warm'])) {
+    // --- 10. White Balance / Color Cast Fixes ("bớt ám vàng", "bớt ám xanh") ---
+    if (hasAny(t, ['bot am vang', 'giam vang', 'khu am vang', 'het am vang'])) {
+      bumpAdj('temperature', -22);
+      bumpHsl('yellow', 's', -20);
+      actions.push('khử ám vàng cho màu trong chuẩn');
+    } else if (hasAny(t, ['bot am xanh', 'khu am xanh', 'het am xanh'])) {
+      bumpAdj('temperature', 22);
+      bumpAdj('tint', 10);
+      actions.push('khử ám xanh cho màu tự nhiên');
+    } else if (hasAny(t, ['am ap', 'am hon', 'tang am', 'tong am', 'mau am', 'vang hon', 'warmer', 'warm'])) {
       bumpAdj('temperature', 24);
       actions.push('chỉnh tông ấm áp');
     } else if (hasAny(t, ['lanh hon', 'tong lanh', 'mau lanh', 'xanh lanh', 'mat me', 'cooler', 'cool', 'giam am'])) {
@@ -204,7 +326,43 @@
       actions.push('chỉnh tông mát lạnh');
     }
 
-    // --- 9. Saturation / Vibrance ---
+    // --- 11. Direct Per-Color HSL Requests ---
+    if (hasAny(t, ['do moi', 'tang do', 'do hon', 'do ruc'])) {
+      bumpHsl('red', 's', 28);
+      actions.push('tăng sắc đỏ (HSL)');
+    } else if (hasAny(t, ['giam do', 'bot do'])) {
+      bumpHsl('red', 's', -26);
+      actions.push('giảm sắc đỏ (HSL)');
+    }
+    if (hasAny(t, ['hong hon', 'them hong', 'tong hong', 'mau hong'])) {
+      bumpAdj('tint', 16);
+      bumpHsl('magenta', 's', 22);
+      actions.push('thêm sắc hồng dịu');
+    }
+    if (hasAny(t, ['tim hon', 'tong tim', 'mau tim'])) {
+      bumpHsl('purple', 's', 26);
+      actions.push('tăng sắc tím (HSL)');
+    }
+    if (hasAny(t, ['troi xanh', 'bau troi', 'bien xanh', 'nuoc xanh', 'sky', 'xanh duong'])) {
+      bumpHsl('blue', 's', 28);
+      bumpHsl('blue', 'l', -14);
+      bumpHsl('aqua', 's', 18);
+      bumpAdj('dehaze', 14);
+      actions.push('làm sâu sắc xanh bầu trời/biển (HSL)');
+    }
+    if (hasAny(t, ['la xanh', 'cay xanh', 'cay tuoi', 'la tuoi', 'xanh la', 'green'])) {
+      if (hasAny(t, ['giam xanh la', 'bot xanh la'])) {
+        bumpHsl('green', 's', -28);
+        actions.push('làm dịu màu xanh lá (HSL)');
+      } else {
+        bumpHsl('green', 's', 24);
+        bumpHsl('green', 'h', 10);
+        bumpHsl('green', 'l', -4);
+        actions.push('làm xanh tươi tán lá (HSL)');
+      }
+    }
+
+    // --- 12. Saturation / Vibrance ---
     if (hasAny(t, ['nhat mau', 'giam bao hoa', 'bot ruc', 'mau tram', 'desaturate', 'muted'])) {
       bumpAdj('saturation', -24);
       actions.push('giảm độ bão hòa cho dịu màu');
@@ -214,26 +372,11 @@
       actions.push('tăng độ tươi màu sống động');
     }
 
-    // --- 10. Sky Blue & Lush Foliage (Targeted HSL!) ---
-    if (hasAny(t, ['troi xanh', 'bau troi', 'bien xanh', 'nuoc xanh', 'sky'])) {
-      bumpHsl('blue', 's', 28);
-      bumpHsl('blue', 'l', -14);
-      bumpHsl('aqua', 's', 18);
-      bumpAdj('dehaze', 14);
-      actions.push('làm sâu sắc xanh bầu trời/biển (HSL)');
-    }
-    if (hasAny(t, ['la xanh', 'cay xanh', 'cay tuoi', 'la tuoi', 'xanh la', 'thien nhien', 'green'])) {
-      bumpHsl('green', 's', 24);
-      bumpHsl('green', 'h', 10);
-      bumpHsl('green', 'l', -4);
-      actions.push('làm xanh tươi tán lá (HSL)');
-    }
-
-    // --- 11. Clarity, Dehaze, Sharpen, Glow, Grain, Vignette, Fade ---
-    if (hasAny(t, ['sac net', 'lam net', 'ro net', 'sharp', 'chi tiet'])) {
-      bumpAdj('sharpen', 30, 0, 100);
-      bumpAdj('clarity', 18);
-      actions.push('tăng độ sắc nét & chi tiết');
+    // --- 13. Clarity, Dehaze, Sharpen, Glow, Grain, Vignette, Fade, Blur ---
+    if (hasAny(t, ['sac net', 'lam net', 'ro net', 'anh bi mo', 'ro hon', 'sharp', 'chi tiet'])) {
+      bumpAdj('sharpen', 34, 0, 100);
+      bumpAdj('clarity', 20);
+      actions.push('tăng độ sắc nét & rõ chi tiết');
     }
     if (hasAny(t, ['trong treo', 'khu suong', 'khu mo', 'khu duc', 'dehaze', 'clarity'])) {
       bumpAdj('dehaze', 22);
@@ -257,13 +400,16 @@
       bumpAdj('fade', 28, 0, 100);
       actions.push('tạo chất phim mờ (Matte Fade)');
     }
-    if (hasAny(t, ['lam mo', 'blur'])) {
-      setAdjIfHigher('blur', 3, 0, 20);
+    if (hasAny(t, ['lam mo toan bo', 'blur']) && !hasAny(t, ['mo nen', 'xoa phong'])) {
+      next.adjustments.blur = Math.round(clamp(3 * mult, 0.5, 20) * 2) / 2;
       actions.push('làm mờ mềm ảnh');
     }
 
-    // --- 12. Crop, Rotate & Frame ---
-    if (hasAny(t, ['xoay trai'])) {
+    // --- 14. Crop, Rotate & Frame ---
+    if (hasAny(t, ['xoay 180', 'nguoc anh'])) {
+      next.transform.rotate = (next.transform.rotate + 180) % 360;
+      actions.push('xoay 180°');
+    } else if (hasAny(t, ['xoay trai'])) {
       next.transform.rotate = (next.transform.rotate - 90 + 360) % 360;
       actions.push('xoay trái 90°');
     } else if (hasAny(t, ['xoay phai', 'xoay anh'])) {
@@ -285,24 +431,19 @@
       const swapped = rot === 90 || rot === 270;
       const imgAspect = (swapped ? srcH : srcW) / (swapped ? srcW : srcH);
       let w = 1, h = 1;
-      if (imgAspect > targetAspect) {
-        w = targetAspect / imgAspect;
-      } else {
-        h = imgAspect / targetAspect;
-      }
+      if (imgAspect > targetAspect) w = targetAspect / imgAspect;
+      else h = imgAspect / targetAspect;
       next.transform.crop = { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
       actions.push(`cắt khung ${label}`);
     };
 
-    if (hasAny(t, ['cat vuong', '1:1', 'hinh vuong', 'avatar'])) {
-      applyCenterCrop(1, '1:1');
-    } else if (hasAny(t, ['16:9', 'man anh rong'])) {
-      applyCenterCrop(16 / 9, '16:9');
-    } else if (hasAny(t, ['9:16', 'story', 'tiktok', 'reels'])) {
-      applyCenterCrop(9 / 16, '9:16');
-    } else if (hasAny(t, ['4:5', 'instagram'])) {
-      applyCenterCrop(4 / 5, '4:5');
-    }
+    if (hasAny(t, ['cat vuong', '1:1', 'hinh vuong', 'avatar'])) applyCenterCrop(1, '1:1');
+    else if (hasAny(t, ['16:9', 'man anh rong'])) applyCenterCrop(16 / 9, '16:9');
+    else if (hasAny(t, ['9:16', 'story', 'tiktok', 'reels'])) applyCenterCrop(9 / 16, '9:16');
+    else if (hasAny(t, ['4:5', 'instagram'])) applyCenterCrop(4 / 5, '4:5');
+    else if (hasAny(t, ['4:3'])) applyCenterCrop(4 / 3, '4:3');
+    else if (hasAny(t, ['3:4'])) applyCenterCrop(3 / 4, '3:4');
+    else if (hasAny(t, ['3:2'])) applyCenterCrop(3 / 2, '3:2');
 
     if (hasAny(t, ['khung polaroid', 'polaroid'])) {
       next.frame.style = 'polaroid';
@@ -322,23 +463,21 @@
       actions.push('gỡ khung ảnh');
     }
 
-    // If user asked for generative pixel editing without Gemini API key, give helpful guidance + smart polish
     if (actions.length === 0) {
       if (looksLikeGenerativeEdit(raw)) {
         return {
           state: next,
           changed: false,
           needsGeminiImage: true,
-          message: 'Yêu cầu chỉnh sửa vật thể/phông nền cần bật chế độ "Biến đổi AI (Gemini)" và nhập Gemini API Key miễn phí (bấm biểu tượng ⚙️ góc phải).',
+          message: 'Yêu cầu chỉnh sửa vật thể / đổi phông nền cần nhập Gemini API Key miễn phí (bấm nút "Gemini API" ở góc phải) để kích hoạt AI tạo sinh.',
         };
       }
-      // Graceful fallback: intelligent subtle Auto Enhance
       const auto = Processor.analyzeAutoEnhance(sourceImage);
       Object.assign(next.adjustments, auto);
       return {
         state: next,
         changed: true,
-        message: 'Đã tự động tối ưu ánh sáng, độ nét & cân bằng màu theo ảnh. Bạn có thể mô tả cụ thể hơn (VD: "ấm hơn", "da sáng hồng", "màu Leica", "trời xanh hơn") hoặc gắn Gemini API Key để AI xử lý sâu hơn.',
+        message: 'Đã tự động cân bằng sáng, độ nét & màu chuẩn. Mẹo: thử gõ "xóa phông", "bớt ám vàng", "chỉnh ảnh đồ ăn", "da trắng hồng", hoặc gắn Gemini API Key để AI hiểu mọi yêu cầu tự do.',
       };
     }
 
@@ -371,26 +510,70 @@
   }
 
   /**
-   * Extracts text and image blocks from the Interactions API REST `steps` response.
+   * CORS-safe Gemini Interactions API REST call (uses ?key= query param, zero custom preflight headers,
+   * automatically falls back from v1beta -> v1 if needed).
+   */
+  async function callGeminiInteractions(apiKey, body) {
+    let lastError = null;
+    for (let i = 0; i < GEMINI_ENDPOINTS.length; i++) {
+      const url = `${GEMINI_ENDPOINTS[i]}?key=${encodeURIComponent(apiKey)}`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          return data;
+        }
+        const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
+        lastError = new Error(msg);
+        // Only retry alternate API version on 404 / unsupported endpoint errors
+        if (res.status !== 404 && res.status !== 400) {
+          throw lastError;
+        }
+      } catch (err) {
+        lastError = err;
+        if (i === GEMINI_ENDPOINTS.length - 1) throw lastError;
+      }
+    }
+    throw lastError || new Error('Không thể kết nối tới Google Gemini API');
+  }
+
+  /**
+   * Extracts text and image blocks defensively from Interactions API `steps` (or legacy `outputs`).
    */
   function parseInteractionResponse(json) {
-    const steps = Array.isArray(json && json.steps) ? json.steps : [];
     const texts = [];
     let imageBlock = null;
 
-    for (const step of steps) {
-      if (step && step.type === 'model_output' && Array.isArray(step.content)) {
-        for (const item of step.content) {
-          if (item.type === 'text' && item.text) {
-            texts.push(item.text);
-          } else if (item.type === 'image' && item.data) {
-            imageBlock = {
-              data: item.data,
-              mime_type: item.mime_type || 'image/png',
-            };
-          }
+    const inspectItems = (items) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (!item) continue;
+        if (item.type === 'text' && item.text) {
+          texts.push(item.text);
+        } else if (item.type === 'image' && item.data) {
+          imageBlock = {
+            data: item.data,
+            mime_type: item.mime_type || 'image/png',
+          };
         }
       }
+    };
+
+    if (Array.isArray(json && json.steps)) {
+      for (const step of json.steps) {
+        if (step && step.type === 'model_output') {
+          inspectItems(step.content);
+        }
+      }
+    }
+    if (!imageBlock && Array.isArray(json && json.outputs)) {
+      inspectItems(json.outputs);
     }
 
     return {
@@ -401,8 +584,22 @@
   }
 
   /**
-   * Gemini 4 Hydrogen Visual Color Grading AI: inspects the actual photo + prompt and returns
-   * a calibrated non-destructive Lumina Studio recipe (preset + adjustments + HSL + frame).
+   * Quick API key connectivity check for the Gemini settings modal.
+   */
+  async function testGeminiConnection(apiKey) {
+    const cleaned = (apiKey || '').trim();
+    if (!cleaned) throw new Error('Vui lòng dán Gemini API Key trước');
+    const data = await callGeminiInteractions(cleaned, {
+      model: MODEL_COLOR_AI,
+      input: 'Reply with OK',
+    });
+    const parsed = parseInteractionResponse(data);
+    return parsed.text || 'OK';
+  }
+
+  /**
+   * Gemini 4 Hydrogen Visual Color Grading AI: inspects actual photo + prompt and returns
+   * a calibrated Lumina Studio recipe (preset + adjustments + HSL + frame).
    */
   async function runGeminiColorAI(prompt, currentState, renderedCanvas, Processor, apiKey) {
     const img = encodeSourceToBase64(renderedCanvas, 768, 0.82);
@@ -417,7 +614,7 @@
       '  "summary_vi": "Câu giải thích ngắn gọn (1 câu tiếng Việt) mô tả bạn đã chỉnh gì",',
       `  "presetId": "một trong: ${presetIds} (hoặc giữ nguyên nếu chỉ tinh chỉnh)",`,
       '  "presetStrength": 0-100,',
-      `  "adjustments": { chỉ ghi các khóa cần đổi trong: ${adjKeys} (giá trị -100..100, trừ blur 0..20 và skinGlow/sharpen/glow/grain/fade/sepia 0..100) },`,
+      `  "adjustments": { chỉ ghi các khóa cần đổi trong: ${adjKeys} (giá trị -100..100, trừ blur 0..20 và skinGlow/sharpen/glow/bokeh/grain/fade/sepia 0..100) },`,
       `  "hsl": { chỉ ghi kênh cần đổi trong: ${hslKeys}, mỗi kênh dạng {"h": -100..100, "s": -100..100, "l": -100..100} },`,
       '  "frameStyle": "none | gallery | dark | polaroid | film (chỉ ghi nếu người dùng nhắc khung ảnh)"',
       '}',
@@ -426,27 +623,13 @@
       `Yêu cầu người dùng: "${prompt}"`,
     ].join('\n');
 
-    const res = await fetch(GEMINI_API_BASE, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20',
-      },
-      body: JSON.stringify({
-        model: MODEL_COLOR_AI,
-        input: [
-          { type: 'text', text: systemPrompt },
-          { type: 'image', mime_type: img.mime_type, data: img.data },
-        ],
-      }),
+    const data = await callGeminiInteractions(apiKey, {
+      model: MODEL_COLOR_AI,
+      input: [
+        { type: 'text', text: systemPrompt },
+        { type: 'image', mime_type: img.mime_type, data: img.data },
+      ],
     });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
-      throw new Error(errMsg);
-    }
 
     const parsed = parseInteractionResponse(data);
     let rawJson = parsed.text;
@@ -471,7 +654,7 @@
     if (recipe.adjustments && typeof recipe.adjustments === 'object') {
       for (const k in recipe.adjustments) {
         if (k in Processor.DEFAULT_ADJUSTMENTS && typeof recipe.adjustments[k] === 'number') {
-          const isPosOnly = ['skinGlow', 'sharpen', 'glow', 'grain', 'fade', 'sepia'].includes(k);
+          const isPosOnly = ['skinGlow', 'sharpen', 'glow', 'bokeh', 'grain', 'fade', 'sepia'].includes(k);
           const min = k === 'blur' || isPosOnly ? 0 : -100;
           const max = k === 'blur' ? 20 : 100;
           next.adjustments[k] = clamp(Math.round(recipe.adjustments[k] * 10) / 10, min, max);
@@ -503,14 +686,13 @@
   }
 
   /**
-   * Gemini Nano Banana 2.1 Generative Image Editing: directly modifies image pixels
-   * (remove objects, swap background, relight, change outfit, artistic styles) via Interactions API.
+   * Gemini Nano Banana 2.1 Generative Image Editing via Interactions API.
    */
   async function runGeminiImageEdit(prompt, renderedCanvas, apiKey, previousInteractionId) {
     const img = encodeSourceToBase64(renderedCanvas, 1280, 0.90);
     const instruction = [
       'Edit the provided photograph precisely according to the user request below.',
-      'Preserve natural realism, subject identity, lighting consistency, and high image quality unless the user asks for an artistic style.',
+      'Preserve natural realism, subject identity, lighting consistency, and high image quality unless an artistic style is requested.',
       `User request: ${prompt}`,
     ].join('\n');
 
@@ -520,34 +702,22 @@
         { type: 'text', text: instruction },
         { type: 'image', mime_type: img.mime_type, data: img.data },
       ],
+      response_format: [
+        { type: 'text' },
+        { type: 'image' },
+      ],
     };
 
     if (previousInteractionId) {
       body.previous_interaction_id = previousInteractionId;
     }
 
-    const res = await fetch(GEMINI_API_BASE, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20',
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errMsg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
-      throw new Error(errMsg);
-    }
-
+    const data = await callGeminiInteractions(apiKey, body);
     const parsed = parseInteractionResponse(data);
     if (!parsed.image || !parsed.image.data) {
-      throw new Error(parsed.text || 'Gemini không trả về ảnh kết quả cho yêu cầu này. Hãy thử diễn đạt cụ thể hơn.');
+      throw new Error(parsed.text || 'Gemini không trả về ảnh kết quả cho yêu cầu này. Hãy thử mô tả cụ thể hơn.');
     }
 
-    // Decode base64 into HTMLImageElement
     const editedImg = await new Promise((resolve, reject) => {
       const el = new Image();
       el.onload = () => resolve(el);
@@ -558,7 +728,7 @@
     return {
       image: editedImg,
       interactionId: parsed.id || null,
-      message: parsed.text || 'Gemini AI đã biến đổi ảnh theo yêu cầu của bạn (có thể bấm Hoàn tác hoặc So sánh Trước/Sau).',
+      message: parsed.text || 'Gemini AI đã biến đổi ảnh theo yêu cầu (có thể bấm Hoàn tác hoặc So sánh Trước/Sau).',
     };
   }
 
@@ -568,6 +738,7 @@
     getApiKey,
     setApiKey,
     looksLikeGenerativeEdit,
+    testGeminiConnection,
     runLocalSmartAI,
     runGeminiColorAI,
     runGeminiImageEdit,
