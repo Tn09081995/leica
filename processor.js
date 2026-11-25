@@ -1773,74 +1773,11 @@
   }
 
   /**
-   * Fast Multi-Scale Content-Aware Inpainting (Magic Eraser / Healing Brush).
-   * Seamlessly removes painted objects (necklaces, wires, blemishes, logos) directly on the
-   * full-resolution source image by solving harmonic color diffusion coarse-to-fine + matching local grain.
-   *
-   * @param {HTMLImageElement|HTMLCanvasElement} source - Original/current full-res image
-   * @param {Array<{x:number,y:number}>} normPoints - Stroke points in normalized [0..1] source coordinates
-   * @param {number} normRadius - Brush radius relative to min(srcW, srcH)
-   * @returns {HTMLCanvasElement} New full-res canvas with the painted region cleanly healed
+   * Core Multi-Scale Content-Aware Inpainting solver operating on an arbitrary full-res maskCanvas
+   * within a tight ROI bounding box (rx, ry, rw, rh).
    */
-  function inpaintStroke(source, normPoints, normRadius) {
-    const srcW = source.naturalWidth || source.width;
-    const srcH = source.naturalHeight || source.height;
-
-    const out = document.createElement('canvas');
-    out.width = srcW;
-    out.height = srcH;
-    const octx = out.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(source, 0, 0, srcW, srcH);
-
-    if (!normPoints || normPoints.length === 0) return out;
-
-    const radiusPx = Math.max(4, Math.round(normRadius * Math.min(srcW, srcH)));
-
-    // 1. Compute tight local ROI bounding box (+ generous clean ring around stroke)
-    let minX = srcW, minY = srcH, maxX = 0, maxY = 0;
-    for (let i = 0; i < normPoints.length; i++) {
-      const px = normPoints[i].x * srcW;
-      const py = normPoints[i].y * srcH;
-      if (px < minX) minX = px;
-      if (px > maxX) maxX = px;
-      if (py < minY) minY = py;
-      if (py > maxY) maxY = py;
-    }
-
-    const pad = Math.max(24, Math.round(radiusPx * 2.2));
-    const rx = Math.max(0, Math.floor(minX - radiusPx - pad));
-    const ry = Math.max(0, Math.floor(minY - radiusPx - pad));
-    const rw = Math.min(srcW - rx, Math.ceil(maxX + radiusPx + pad) - rx);
-    const rh = Math.min(srcH - ry, Math.ceil(maxY + radiusPx + pad) - ry);
-    if (rw < 4 || rh < 4) return out;
-
-    // 2. Rasterize painted mask onto ROI canvas
-    const maskCanvas = document.createElement('canvas');
-    maskCanvas.width = rw;
-    maskCanvas.height = rh;
-    const mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
-    mctx.lineCap = 'round';
-    mctx.lineJoin = 'round';
-    mctx.strokeStyle = '#ffffff';
-    mctx.fillStyle = '#ffffff';
-    mctx.lineWidth = radiusPx * 2;
-
-    if (normPoints.length === 1) {
-      mctx.beginPath();
-      mctx.arc(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry, radiusPx, 0, Math.PI * 2);
-      mctx.fill();
-    } else {
-      mctx.beginPath();
-      mctx.moveTo(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry);
-      for (let i = 1; i < normPoints.length; i++) {
-        mctx.lineTo(normPoints[i].x * srcW - rx, normPoints[i].y * srcH - ry);
-      }
-      mctx.stroke();
-    }
-
-    // Limit working patch resolution to max 720px on longest side for instant <60ms speed,
-    // then composite smoothly back at full native resolution
-    const workScale = Math.min(1, 720 / Math.max(rw, rh));
+  function inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, featherPx) {
+    const workScale = Math.min(1, 760 / Math.max(rw, rh));
     const ww = Math.max(8, Math.round(rw * workScale));
     const wh = Math.max(8, Math.round(rh * workScale));
 
@@ -1877,7 +1814,6 @@
     }
     if (maskedCount === 0 || maskedCount === total) return out;
 
-    // 3. Build Multi-Scale Coarse-to-Fine Pyramid so large/wide holes fill seamlessly in milliseconds
     function solveLevel(w, h, rArr, gArr, bArr, mArr) {
       if (w > 24 && h > 24) {
         const cw = Math.max(4, w >> 1);
@@ -1925,7 +1861,6 @@
           solveLevel(cw, ch, cR, cG, cB, cM);
         }
 
-        // Bilinearly upsample coarse solution to initialize masked pixels at this level
         for (let y = 0; y < h; y++) {
           const fy = (y + 0.5) * 0.5 - 0.5;
           const y0 = clamp(Math.floor(fy), 0, ch - 1);
@@ -1954,7 +1889,6 @@
           }
         }
       } else {
-        // Base level: initialize masked pixels with average of clean boundary pixels
         let sr = 0, sg = 0, sb = 0, cnt = 0;
         for (let i = 0; i < w * h; i++) {
           if (!mArr[i]) { sr += rArr[i]; sg += gArr[i]; sb += bArr[i]; cnt++; }
@@ -1967,8 +1901,7 @@
         }
       }
 
-      // Gauss-Seidel SOR (Successive Over-Relaxation) harmonic smoothing inside mask
-      const iters = w <= 64 ? 40 : 22;
+      const iters = w <= 64 ? 42 : 24;
       const omega = 1.65;
       for (let it = 0; it < iters; it++) {
         for (let y = 1; y < h - 1; y++) {
@@ -1984,7 +1917,6 @@
             bArr[i] += (nb - bArr[i]) * omega;
           }
         }
-        // Handle borders cleanly
         for (let x = 0; x < w; x++) {
           if (mArr[x]) { rArr[x] = rArr[x + w]; gArr[x] = gArr[x + w]; bArr[x] = bArr[x + w]; }
           const bIdx = (h - 1) * w + x;
@@ -2001,7 +1933,6 @@
 
     solveLevel(ww, wh, rBuf, gBuf, bBuf, mask);
 
-    // 4. Measure natural local sensor grain from clean ring surrounding the mask so skin texture matches seamlessly
     let diffSum = 0;
     let diffCnt = 0;
     for (let y = 2; y < wh - 2; y += 2) {
@@ -2014,9 +1945,8 @@
         }
       }
     }
-    const localGrain = clamp(diffCnt ? (diffSum / diffCnt) * 0.85 : 2.5, 1.0, 9.5);
+    const localGrain = clamp(diffCnt ? (diffSum / diffCnt) * 0.85 : 2.2, 1.0, 9.0);
 
-    // Write healed pixels with subtle matched micro-grain
     for (let y = 0; y < wh; y++) {
       for (let x = 0; x < ww; x++) {
         const i = y * ww + x;
@@ -2032,7 +1962,6 @@
     }
     pctx.putImageData(imgData, 0, 0);
 
-    // 5. Soft feathered composite back onto full-res output canvas
     const comp = document.createElement('canvas');
     comp.width = rw;
     comp.height = rh;
@@ -2041,12 +1970,11 @@
     cctx.imageSmoothingQuality = 'high';
     cctx.drawImage(patchCanvas, 0, 0, rw, rh);
 
-    // Soft feather mask edge so transition is completely invisible
     const featherMask = document.createElement('canvas');
     featherMask.width = rw;
     featherMask.height = rh;
     const fctx = featherMask.getContext('2d');
-    fctx.filter = `blur(${Math.max(1.5, Math.min(6, radiusPx * 0.16)).toFixed(1)}px)`;
+    fctx.filter = `blur(${Math.max(1.5, Math.min(8, featherPx || 3)).toFixed(1)}px)`;
     fctx.drawImage(maskCanvas, 0, 0);
 
     cctx.globalCompositeOperation = 'destination-in';
@@ -2055,6 +1983,261 @@
 
     octx.drawImage(comp, rx, ry);
     return out;
+  }
+
+  /**
+   * Manual Magic Eraser brush stroke wrapper.
+   */
+  function inpaintStroke(source, normPoints, normRadius) {
+    const srcW = source.naturalWidth || source.width;
+    const srcH = source.naturalHeight || source.height;
+
+    const out = document.createElement('canvas');
+    out.width = srcW;
+    out.height = srcH;
+    const octx = out.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(source, 0, 0, srcW, srcH);
+
+    if (!normPoints || normPoints.length === 0) return out;
+
+    const radiusPx = Math.max(4, Math.round(normRadius * Math.min(srcW, srcH)));
+    let minX = srcW, minY = srcH, maxX = 0, maxY = 0;
+    for (let i = 0; i < normPoints.length; i++) {
+      const px = normPoints[i].x * srcW;
+      const py = normPoints[i].y * srcH;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+
+    const pad = Math.max(24, Math.round(radiusPx * 2.2));
+    const rx = Math.max(0, Math.floor(minX - radiusPx - pad));
+    const ry = Math.max(0, Math.floor(minY - radiusPx - pad));
+    const rw = Math.min(srcW - rx, Math.ceil(maxX + radiusPx + pad) - rx);
+    const rh = Math.min(srcH - ry, Math.ceil(maxY + radiusPx + pad) - ry);
+    if (rw < 4 || rh < 4) return out;
+
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = rw;
+    maskCanvas.height = rh;
+    const mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+    mctx.lineCap = 'round';
+    mctx.lineJoin = 'round';
+    mctx.strokeStyle = '#ffffff';
+    mctx.fillStyle = '#ffffff';
+    mctx.lineWidth = radiusPx * 2;
+
+    if (normPoints.length === 1) {
+      mctx.beginPath();
+      mctx.arc(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry, radiusPx, 0, Math.PI * 2);
+      mctx.fill();
+    } else {
+      mctx.beginPath();
+      mctx.moveTo(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry);
+      for (let i = 1; i < normPoints.length; i++) {
+        mctx.lineTo(normPoints[i].x * srcW - rx, normPoints[i].y * srcH - ry);
+      }
+      mctx.stroke();
+    }
+
+    return inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, radiusPx * 0.16);
+  }
+
+  /**
+   * Automatic AI Region Editor: executes Gemini Vision spatial plans (strokes, polygons, boxes in 0..1000 coords)
+   * directly on the full-resolution image! Supports 'remove' (content-aware inpaint), 'recolor', 'blur', 'brighten'.
+   */
+  function applyAiRegionEdit(source, plan) {
+    const srcW = source.naturalWidth || source.width;
+    const srcH = source.naturalHeight || source.height;
+    const minSide = Math.min(srcW, srcH);
+
+    const out = document.createElement('canvas');
+    out.width = srcW;
+    out.height = srcH;
+    const octx = out.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(source, 0, 0, srcW, srcH);
+
+    const strokes = Array.isArray(plan && plan.strokes) ? plan.strokes : [];
+    const polygons = Array.isArray(plan && plan.polygons) ? plan.polygons : [];
+    const boxes = Array.isArray(plan && plan.boxes) ? plan.boxes : [];
+
+    // Compute overall pixel bounding box across all AI shapes
+    let minX = srcW, minY = srcH, maxX = 0, maxY = 0;
+    let maxStrokePx = 12;
+    let hasShape = false;
+
+    const expandPt = (x, y) => {
+      hasShape = true;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    };
+
+    strokes.forEach((st) => {
+      const pts = Array.isArray(st && st.points) ? st.points : [];
+      const wPx = Math.max(8, Math.round(((st.width || 18) / 1000) * minSide));
+      if (wPx > maxStrokePx) maxStrokePx = wPx;
+      pts.forEach((p) => {
+        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+          expandPt((clamp(p.x, 0, 1000) / 1000) * srcW, (clamp(p.y, 0, 1000) / 1000) * srcH);
+        }
+      });
+    });
+
+    polygons.forEach((poly) => {
+      const pts = Array.isArray(poly) ? poly : (Array.isArray(poly && poly.points) ? poly.points : []);
+      pts.forEach((p) => {
+        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+          expandPt((clamp(p.x, 0, 1000) / 1000) * srcW, (clamp(p.y, 0, 1000) / 1000) * srcH);
+        } else if (Array.isArray(p) && p.length >= 2) {
+          expandPt((clamp(p[0], 0, 1000) / 1000) * srcW, (clamp(p[1], 0, 1000) / 1000) * srcH);
+        }
+      });
+    });
+
+    // Only fall back to bounding boxes when no finer strokes/polygons were returned
+    const useBoxes = !hasShape && boxes.length > 0;
+    if (useBoxes) {
+      boxes.forEach((b) => {
+        if (Array.isArray(b) && b.length === 4) {
+          // Gemini native box_2d is [ymin, xmin, ymax, xmax] in 0..1000
+          expandPt((clamp(b[1], 0, 1000) / 1000) * srcW, (clamp(b[0], 0, 1000) / 1000) * srcH);
+          expandPt((clamp(b[3], 0, 1000) / 1000) * srcW, (clamp(b[2], 0, 1000) / 1000) * srcH);
+        }
+      });
+    }
+
+    if (!hasShape) return { canvas: out, applied: false };
+
+    const pad = Math.max(32, Math.round(maxStrokePx * 2.4), Math.round(Math.max(maxX - minX, maxY - minY) * 0.25));
+    const rx = Math.max(0, Math.floor(minX - maxStrokePx - pad));
+    const ry = Math.max(0, Math.floor(minY - maxStrokePx - pad));
+    const rw = Math.min(srcW - rx, Math.ceil(maxX + maxStrokePx + pad) - rx);
+    const rh = Math.min(srcH - ry, Math.ceil(maxY + maxStrokePx + pad) - ry);
+    if (rw < 4 || rh < 4) return { canvas: out, applied: false };
+
+    // Rasterize AI shapes into ROI maskCanvas
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = rw;
+    maskCanvas.height = rh;
+    const mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+    mctx.fillStyle = '#ffffff';
+    mctx.strokeStyle = '#ffffff';
+    mctx.lineCap = 'round';
+    mctx.lineJoin = 'round';
+
+    strokes.forEach((st) => {
+      const pts = Array.isArray(st && st.points) ? st.points : [];
+      if (pts.length === 0) return;
+      // Add subtle +25% safety width so fine object shadows/halos are completely covered
+      const lineW = Math.max(8, Math.round(((st.width || 18) / 1000) * minSide * 1.25));
+      mctx.lineWidth = lineW;
+      if (pts.length === 1) {
+        mctx.beginPath();
+        mctx.arc((pts[0].x / 1000) * srcW - rx, (pts[0].y / 1000) * srcH - ry, lineW / 2, 0, Math.PI * 2);
+        mctx.fill();
+      } else {
+        mctx.beginPath();
+        mctx.moveTo((pts[0].x / 1000) * srcW - rx, (pts[0].y / 1000) * srcH - ry);
+        for (let i = 1; i < pts.length; i++) {
+          mctx.lineTo((pts[i].x / 1000) * srcW - rx, (pts[i].y / 1000) * srcH - ry);
+        }
+        mctx.stroke();
+      }
+    });
+
+    polygons.forEach((poly) => {
+      const pts = Array.isArray(poly) ? poly : (Array.isArray(poly && poly.points) ? poly.points : []);
+      if (pts.length < 3) return;
+      mctx.beginPath();
+      pts.forEach((p, idx) => {
+        const px = ((typeof p.x === 'number' ? p.x : p[0]) / 1000) * srcW - rx;
+        const py = ((typeof p.y === 'number' ? p.y : p[1]) / 1000) * srcH - ry;
+        if (idx === 0) mctx.moveTo(px, py);
+        else mctx.lineTo(px, py);
+      });
+      mctx.closePath();
+      mctx.fill();
+      // Slight 4px outer dilation so edge pixels don't bleed
+      mctx.lineWidth = Math.max(4, Math.round(minSide * 0.005));
+      mctx.stroke();
+    });
+
+    if (useBoxes) {
+      boxes.forEach((b) => {
+        if (Array.isArray(b) && b.length === 4) {
+          const bx = (b[1] / 1000) * srcW - rx;
+          const by = (b[0] / 1000) * srcH - ry;
+          const bw = ((b[3] - b[1]) / 1000) * srcW;
+          const bh = ((b[2] - b[0]) / 1000) * srcH;
+          mctx.beginPath();
+          mctx.ellipse(bx + bw / 2, by + bh / 2, Math.max(4, bw * 0.54), Math.max(4, bh * 0.54), 0, 0, Math.PI * 2);
+          mctx.fill();
+        }
+      });
+    }
+
+    const action = (plan && plan.action) || 'remove';
+
+    if (action === 'remove') {
+      const healed = inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, Math.max(2, maxStrokePx * 0.18));
+      return { canvas: healed, applied: true };
+    }
+
+    // Region Blur / Recolor / Brighten inside feathered AI mask
+    const roi = document.createElement('canvas');
+    roi.width = rw;
+    roi.height = rh;
+    const rctx = roi.getContext('2d', { willReadFrequently: true });
+
+    if (action === 'blur') {
+      const blurPx = clamp(((plan.blurStrength || 40) / 100) * (minSide * 0.025), 3, 45);
+      rctx.filter = `blur(${blurPx.toFixed(1)}px)`;
+      rctx.drawImage(out, rx, ry, rw, rh, 0, 0, rw, rh);
+      rctx.filter = 'none';
+    } else {
+      rctx.drawImage(out, rx, ry, rw, rh, 0, 0, rw, rh);
+      const idata = rctx.getImageData(0, 0, rw, rh);
+      const d = idata.data;
+      const targetHue = typeof plan.targetHue === 'number' ? ((plan.targetHue % 360) + 360) % 360 : null;
+      const hueShift = typeof plan.hueShift === 'number' ? plan.hueShift : 0;
+      const satDelta = (typeof plan.satDelta === 'number' ? plan.satDelta : 0) / 100;
+      const lumDelta = (typeof plan.lumDelta === 'number' ? plan.lumDelta : (action === 'brighten' ? 18 : 0)) / 100;
+
+      for (let i = 0; i < d.length; i += 4) {
+        let [H, S, L] = rgbToHsl(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
+        if (action === 'recolor') {
+          if (targetHue !== null) H = targetHue;
+          else H = (H + hueShift + 360) % 360;
+          S = clamp(S + satDelta * (0.35 + S * 0.65), 0, 1);
+          L = clamp(L + lumDelta * 0.45, 0, 1);
+        } else if (action === 'brighten') {
+          L = clamp(L + lumDelta * 0.35 * (1 - L * 0.45), 0, 1);
+        }
+        const [nr, ng, nb] = hslToRgb(H, S, L);
+        d[i] = clamp255(nr * 255);
+        d[i + 1] = clamp255(ng * 255);
+        d[i + 2] = clamp255(nb * 255);
+      }
+      rctx.putImageData(idata, 0, 0);
+    }
+
+    const feather = document.createElement('canvas');
+    feather.width = rw;
+    feather.height = rh;
+    const fctx = feather.getContext('2d');
+    fctx.filter = `blur(${Math.max(4, Math.round(minSide * 0.006))}px)`;
+    fctx.drawImage(maskCanvas, 0, 0);
+
+    rctx.globalCompositeOperation = 'destination-in';
+    rctx.drawImage(feather, 0, 0);
+    rctx.globalCompositeOperation = 'source-over';
+    octx.drawImage(roi, rx, ry);
+
+    return { canvas: out, applied: true };
   }
 
   global.LuminaProcessor = {
@@ -2067,6 +2250,7 @@
     renderPipeline,
     analyzeAutoEnhance,
     inpaintStroke,
+    applyAiRegionEdit,
     drawHistogram,
     generateSampleImage,
   };

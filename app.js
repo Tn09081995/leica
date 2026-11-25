@@ -188,6 +188,7 @@
   let aiMode = 'color'; // 'color' | 'erase' | 'generative'
   let aiBusy = false;
   let aiPrevInteractionId = null;
+  let geminiPaidImageBlocked = false;
   let eraserBrushPx = 22;
 
   // View / UI transient state
@@ -2125,6 +2126,44 @@
     els.aiConfigModal.classList.add('hidden');
   }
 
+  /**
+   * Maps a Gemini Vision region plan from displayed (cropped/rotated) 0..1000 space
+   * into underlying sourceImage 0..1000 space so automatic edits align pixel-accurately.
+   */
+  function mapVisionPlanToSource(plan, transform) {
+    const mapPt = (p) => {
+      const rawX = typeof p.x === 'number' ? p.x : p[0];
+      const rawY = typeof p.y === 'number' ? p.y : p[1];
+      const mapped = displayToSourceNorm(clamp(rawX, 0, 1000) / 1000, clamp(rawY, 0, 1000) / 1000, transform);
+      return { x: mapped.x * 1000, y: mapped.y * 1000 };
+    };
+
+    const crop = (transform && transform.crop) || { x: 0, y: 0, w: 1, h: 1 };
+    const widthScale = Math.min(crop.w, crop.h);
+
+    return Object.assign({}, plan, {
+      strokes: (plan.strokes || []).map((st) => ({
+        width: Math.max(6, (st.width || 18) * widthScale),
+        points: (st.points || []).map(mapPt),
+      })),
+      polygons: (plan.polygons || []).map((poly) => {
+        const pts = Array.isArray(poly) ? poly : (poly.points || []);
+        return { points: pts.map(mapPt) };
+      }),
+      boxes: (plan.boxes || []).map((b) => {
+        if (!Array.isArray(b) || b.length !== 4) return b;
+        const p1 = displayToSourceNorm(clamp(b[1], 0, 1000) / 1000, clamp(b[0], 0, 1000) / 1000, transform);
+        const p2 = displayToSourceNorm(clamp(b[3], 0, 1000) / 1000, clamp(b[2], 0, 1000) / 1000, transform);
+        return [
+          Math.min(p1.y, p2.y) * 1000,
+          Math.min(p1.x, p2.x) * 1000,
+          Math.max(p1.y, p2.y) * 1000,
+          Math.max(p1.x, p2.x) * 1000,
+        ];
+      }),
+    });
+  }
+
   async function executeAiPrompt(promptText, forceGenerative) {
     const prompt = (promptText || '').trim();
     if (!prompt || aiBusy) return;
@@ -2135,52 +2174,90 @@
 
     const apiKey = AI.getApiKey();
     const wantsGen = AI.looksLikeGenerativeEdit(prompt);
-    // Smart auto-routing: if user has a Gemini API key and types a generative edit ("xóa người", "đổi nền"...)
-    // automatically use Gemini Nano Banana 2.1 even if they didn't manually flip the toggle!
     const useGenerative = forceGenerative || aiMode === 'generative' || (Boolean(apiKey) && wantsGen);
 
-    // Generative pixel editing mode (Gemini Nano Banana 2.1)
+    // Generative / Object Removal / Regional Editing Mode
     if (useGenerative) {
       if (!apiKey) {
-        setAiReply('Để xóa vật thể hoặc đổi phông nền, hãy nhập Gemini API Key miễn phí (bấm nút "Gemini API" ở góc phải).', 'error');
+        setAiReply('Hãy nhập Gemini API Key (miễn phí) để AI tự động định vị và xóa/sửa vật thể theo câu lệnh của bạn.', 'error', true);
         openAiConfigModal();
         return;
       }
 
       setAiMode('generative');
       setAiBusy(true);
-      setAiReply('Gemini AI (Nano Banana 2.1) đang biến đổi bức ảnh theo yêu cầu của bạn...', 'loading');
+
+      const rendered = P.renderPipeline(sourceImage, state, {
+        maxDim: 1280,
+        needOriginal: false,
+        includeFrame: false,
+      }).processedCanvas;
+
+      // 1. Try Paid-Tier native Gemini Image Editing first (unless already known Free Tier limit=0)
+      if (!geminiPaidImageBlocked) {
+        setAiReply('Gemini AI đang phân tích và chỉnh sửa ảnh theo yêu cầu của bạn...', 'loading');
+        try {
+          const res = await AI.runGeminiImageEdit(prompt, rendered, apiKey, aiPrevInteractionId);
+          aiPrevInteractionId = res.interactionId || aiPrevInteractionId;
+
+          sourceImage = res.image;
+          const keepFrame = cloneState(state.frame);
+          state = createDefaultState();
+          state.frame = keepFrame;
+          cropDraft = { x: 0, y: 0, w: 1, h: 1 };
+
+          generatePresetThumbnails();
+          syncControlsFromState();
+          pushHistory();
+          scheduleRender();
+          setAiReply(res.message, 'ok');
+          showToast('Gemini AI đã sửa ảnh xong');
+          setAiBusy(false);
+          return;
+        } catch (err) {
+          if (err && err.isFreeTierImageLimit) {
+            geminiPaidImageBlocked = true;
+            // Seamlessly continue to Step 2: Free-Tier Gemini 4 Hydrogen Vision + Auto Inpainting!
+          } else {
+            setAiReply(`Lỗi Gemini AI: ${err.message || err}`, 'error');
+            showToast('Không thể kết nối Gemini AI');
+            setAiBusy(false);
+            return;
+          }
+        }
+      }
+
+      // 2. Automatic Free-Tier Mode: Gemini 4 Hydrogen Vision locates exact object -> Auto Inpaint / Recolor / Blur!
+      setAiReply('Gemini Vision AI đang tự tìm chính xác vật thể trong ảnh và xử lý tự động...', 'loading');
       try {
-        const rendered = P.renderPipeline(sourceImage, state, {
-          maxDim: 1280,
-          needOriginal: false,
-          includeFrame: false,
-        }).processedCanvas;
+        const visionRes = await AI.runGeminiVisionRegionEdit(prompt, rendered, apiKey);
+        const plan = visionRes.plan;
 
-        const res = await AI.runGeminiImageEdit(prompt, rendered, apiKey, aiPrevInteractionId);
-        aiPrevInteractionId = res.interactionId || aiPrevInteractionId;
+        if (!plan || plan.found === false) {
+          setAiReply(visionRes.message || 'AI không tìm thấy đối tượng tương ứng trong ảnh. Hãy mô tả rõ hơn vị trí vật thể cần sửa.', 'error');
+          showToast('AI không tìm thấy vật thể yêu cầu');
+          setAiBusy(false);
+          return;
+        }
 
-        // Apply returned AI image as new working source while preserving originalSourceImage for Compare/Reset!
-        sourceImage = res.image;
-        const keepFrame = cloneState(state.frame);
-        state = createDefaultState();
-        state.frame = keepFrame;
-        cropDraft = { x: 0, y: 0, w: 1, h: 1 };
+        const mappedPlan = mapVisionPlanToSource(plan, state.transform);
+        const editResult = P.applyAiRegionEdit(sourceImage, mappedPlan);
 
+        if (!editResult.applied) {
+          setAiReply('AI chưa khoanh được vùng cụ thể cho yêu cầu này. Hãy mô tả chi tiết hơn (VD: "xóa sợi dây chuyền trên cổ").', 'error', true);
+          setAiBusy(false);
+          return;
+        }
+
+        sourceImage = editResult.canvas;
         generatePresetThumbnails();
-        syncControlsFromState();
         pushHistory();
         scheduleRender();
-        setAiReply(res.message, 'ok');
-        showToast('Gemini AI đã sửa ảnh xong');
+        setAiReply(`${visionRes.message} (Nếu còn sót nét nhỏ, bạn có thể bấm "Sửa ảnh" lần nữa hoặc dùng Hoàn tác)`, 'ok');
+        showToast('AI đã tự động chỉnh sửa ảnh xong!');
       } catch (err) {
-        const isFreeLimit = Boolean(err && err.isFreeTierImageLimit);
-        setAiReply(
-          isFreeLimit ? err.message : `Lỗi Gemini AI: ${err.message || err}`,
-          'error',
-          isFreeLimit
-        );
-        showToast(isFreeLimit ? 'Dùng Cọ tẩy vật thể miễn phí để xóa ngay!' : 'Không thể kết nối Gemini AI');
+        setAiReply(`Lỗi Gemini Vision AI: ${err.message || err}`, 'error', true);
+        showToast('Lỗi xử lý AI');
       } finally {
         setAiBusy(false);
       }
@@ -2271,6 +2348,7 @@
     if (els.aiKeySaveBtn) {
       els.aiKeySaveBtn.addEventListener('click', () => {
         AI.setApiKey(els.aiApiKeyInput.value);
+        geminiPaidImageBlocked = false;
         updateAiKeyBadge();
         closeAiConfigModal();
         const hasKey = Boolean(AI.getApiKey());

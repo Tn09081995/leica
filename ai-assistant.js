@@ -817,6 +817,143 @@
     };
   }
 
+  /**
+   * Free-Tier Automatic AI Object Removal & Regional Editing powered by Gemini 4 Hydrogen Vision!
+   * Gemini visually inspects the photo and outputs pixel-accurate strokes/polygons in [0..1000] space,
+   * which LuminaProcessor.applyAiRegionEdit executes automatically at full native resolution.
+   */
+  async function runGeminiVisionRegionEdit(prompt, renderedCanvas, apiKey) {
+    const img = encodeSourceToBase64(renderedCanvas, 1024, 0.90);
+
+    const schema = {
+      type: 'object',
+      properties: {
+        found: { type: 'boolean', description: 'Whether the target object/region requested by the user exists in the image.' },
+        action: {
+          type: 'string',
+          enum: ['remove', 'recolor', 'blur', 'brighten'],
+          description: 'Use "remove" to erase objects/jewelry/blemishes/text/people; "recolor" to change color of clothing/lips/hair/sky; "blur" to blur a region/background; "brighten" to brighten/darken a specific region.',
+        },
+        summary_vi: { type: 'string', description: 'Short 1-sentence Vietnamese description of what you located and edited.' },
+        strokes: {
+          type: 'array',
+          description: 'Polylines tracing thin or curved items (e.g., necklace chains, wires, straps, lines). Use 8 to 24 densely spaced points along the exact centerline.',
+          items: {
+            type: 'object',
+            properties: {
+              width: { type: 'integer', description: 'Stroke thickness in 0..1000 image units (e.g., 16-24 for a thin necklace chain, 26-40 for thicker straps/wires).' },
+              points: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    x: { type: 'integer', description: 'Horizontal position from left=0 to right=1000' },
+                    y: { type: 'integer', description: 'Vertical position from top=0 to bottom=1000' },
+                  },
+                  required: ['x', 'y'],
+                },
+              },
+            },
+            required: ['width', 'points'],
+          },
+        },
+        polygons: {
+          type: 'array',
+          description: 'Tight closed polygons around solid items (e.g., pendant, blemish, logo, dress, face, background person).',
+          items: {
+            type: 'object',
+            properties: {
+              points: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    x: { type: 'integer', description: 'Horizontal position from left=0 to right=1000' },
+                    y: { type: 'integer', description: 'Vertical position from top=0 to bottom=1000' },
+                  },
+                  required: ['x', 'y'],
+                },
+              },
+            },
+            required: ['points'],
+          },
+        },
+        boxes: {
+          type: 'array',
+          description: 'Optional fallback 2D bounding boxes as [ymin, xmin, ymax, xmax] in 0..1000.',
+          items: { type: 'array', items: { type: 'integer' } },
+        },
+        targetHue: { type: 'integer', description: 'For action="recolor": target hue angle 0..360 (0=red, 30=orange, 60=yellow, 120=green, 210=blue, 280=purple, 330=pink).' },
+        satDelta: { type: 'integer', description: 'For action="recolor": saturation change -100..100.' },
+        lumDelta: { type: 'integer', description: 'For action="recolor" or "brighten": brightness change -60..60.' },
+        blurStrength: { type: 'integer', description: 'For action="blur": blur strength 15..90.' },
+      },
+      required: ['found', 'action', 'summary_vi', 'strokes', 'polygons'],
+    };
+
+    const instruction = [
+      'You are a precision computer-vision photo retouching engine.',
+      'Carefully inspect the image (including any white/black margins — coordinates MUST be relative to the ENTIRE image canvas from 0 to 1000).',
+      'Understand the user request even if it contains Vietnamese typing typos (e.g. "dây chyteenf" = "dây chuyền" = necklace).',
+      'Locate the EXACT target object(s) to edit:',
+      '- For thin/curved items like a necklace chain on the neck, trace the FULL V-shaped or curved chain carefully using 10-20 consecutive {x, y} points in `strokes` with `width` ~ 18-24, AND trace the hanging pendant/charm tightly in `polygons` (or a small stroke/circle). Keep the mask focused tightly on the jewelry itself and avoid touching clothing straps or hair.',
+      '- For solid objects (blemishes, logos, people, clothing to recolor), trace a tight accurate polygon in `polygons`.',
+      '- Double-check that `x` is left-to-right (0..1000) and `y` is top-to-bottom (0..1000).',
+      `User request: "${prompt}"`,
+    ].join('\n');
+
+    const jsonReminder = '\nReturn ONLY valid raw JSON matching: {"found": true/false, "action": "remove"|"recolor"|"blur"|"brighten", "summary_vi": "...", "strokes": [{"width": 20, "points": [{"x": 500, "y": 100}]}], "polygons": [{"points": [{"x": 500, "y": 100}]}], "boxes": [[ymin, xmin, ymax, xmax]], "targetHue": 0, "satDelta": 0, "lumDelta": 0, "blurStrength": 40}.';
+
+    let data, model;
+    try {
+      const res = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
+        model: m,
+        input: [
+          { type: 'text', text: instruction },
+          { type: 'image', mime_type: img.mime_type, data: img.data },
+        ],
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema,
+        },
+      }));
+      data = res.data;
+      model = res.model;
+    } catch (schemaErr) {
+      // Defensive fallback if an endpoint/model rejects structured schema parameter
+      if (schemaErr && /API key|quota|billing|401|403|429/i.test(schemaErr.message || '')) {
+        throw schemaErr;
+      }
+      const res = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
+        model: m,
+        input: [
+          { type: 'text', text: instruction + jsonReminder },
+          { type: 'image', mime_type: img.mime_type, data: img.data },
+        ],
+      }));
+      data = res.data;
+      model = res.model;
+    }
+
+    const parsed = parseInteractionResponse(data);
+    let rawJson = parsed.text;
+    const fenced = rawJson.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) rawJson = fenced[1].trim();
+    const firstBrace = rawJson.indexOf('{');
+    const lastBrace = rawJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      rawJson = rawJson.slice(firstBrace, lastBrace + 1);
+    }
+
+    const plan = JSON.parse(rawJson);
+    return {
+      plan,
+      model,
+      message: plan.summary_vi || 'Gemini AI đã tự động nhận diện và xử lý vùng theo yêu cầu.',
+    };
+  }
+
   global.LuminaAI = {
     MODEL_COLOR_AI,
     MODEL_IMAGE_AI,
@@ -827,5 +964,6 @@
     runLocalSmartAI,
     runGeminiColorAI,
     runGeminiImageEdit,
+    runGeminiVisionRegionEdit,
   };
 })(window);
