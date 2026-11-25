@@ -62,9 +62,9 @@
     const isOnlyLocalBlur = hasAny(t, ['xoa phong', 'mo nen', 'mo hau canh', 'lam mo nen', 'bokeh']);
     const isOnlyResetOrFrame = hasAny(t, ['xoa khung', 'bo khung', 'xoa het chinh', 'dat lai', 've goc']);
 
-    // Generic removal verbs: "xóa dây chuyền", "xóa người", "xóa mụn", "bỏ đồng hồ", "gỡ kính", "che logo"...
+    // Generic removal verbs: "xóa dây chuyền", "xóa người", "xóa mụn", "bỏ đồng hồ", "gỡ kính", "che logo", "dọn vết còn sót"...
     if (!isOnlyLocalBlur && !isOnlyResetOrFrame) {
-      if (/(^|\s)(xoa|bo di|go bo|loai bo|cat bo|tay |che di|remove|erase|delete)\b/.test(t)) {
+      if (/(^|\s)(xoa|bo di|go bo|loai bo|cat bo|tay |che di|don sach|lam sach|vet sot|con sot|remove|erase|delete|clean up)\b/.test(t)) {
         return true;
       }
     }
@@ -502,19 +502,26 @@
   }
 
   /**
-   * Encodes an HTMLCanvasElement / HTMLImageElement to compact JPEG base64 for Gemini API.
+   * Encodes an HTMLCanvasElement / HTMLImageElement (or a normalized sub-rect) to compact JPEG base64 for Gemini API.
    */
-  function encodeSourceToBase64(source, maxDim = 1024, quality = 0.88) {
+  function encodeSourceToBase64(source, maxDim = 1024, quality = 0.88, cropRect = null) {
     const srcW = source.naturalWidth || source.width;
     const srcH = source.naturalHeight || source.height;
-    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
-    const w = Math.max(16, Math.round(srcW * scale));
-    const h = Math.max(16, Math.round(srcH * scale));
+    const sx = cropRect ? Math.round(clamp(cropRect.x, 0, 0.99) * srcW) : 0;
+    const sy = cropRect ? Math.round(clamp(cropRect.y, 0, 0.99) * srcH) : 0;
+    const sw = cropRect ? Math.max(16, Math.round(clamp(cropRect.w, 0.01, 1 - sx / srcW) * srcW)) : srcW;
+    const sh = cropRect ? Math.max(16, Math.round(clamp(cropRect.h, 0.01, 1 - sy / srcH) * srcH)) : srcH;
+
+    const scale = Math.min(1, maxDim / Math.max(sw, sh));
+    const w = Math.max(16, Math.round(sw * scale));
+    const h = Math.max(16, Math.round(sh * scale));
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     const ctx = c.getContext('2d');
-    ctx.drawImage(source, 0, 0, w, h);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
     const dataUrl = c.toDataURL('image/jpeg', quality);
     return {
       mime_type: 'image/jpeg',
@@ -817,15 +824,167 @@
     };
   }
 
-  /**
-   * Free-Tier Automatic AI Object Removal & Regional Editing powered by Gemini 4 Hydrogen Vision!
-   * Gemini visually inspects the photo and outputs pixel-accurate strokes/polygons in [0..1000] space,
-   * which LuminaProcessor.applyAiRegionEdit executes automatically at full native resolution.
-   */
-  async function runGeminiVisionRegionEdit(prompt, renderedCanvas, apiKey) {
-    const img = encodeSourceToBase64(renderedCanvas, 1024, 0.90);
+  function parseJsonLoose(rawText) {
+    let rawJson = (rawText || '').trim();
+    const fenced = rawJson.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) rawJson = fenced[1].trim();
+    const firstBrace = rawJson.indexOf('{');
+    const lastBrace = rawJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      rawJson = rawJson.slice(firstBrace, lastBrace + 1);
+    }
+    return JSON.parse(rawJson);
+  }
 
-    const schema = {
+  async function callGeminiVisionJson(apiKey, inputParts, schema, jsonReminder) {
+    try {
+      const res = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
+        model: m,
+        input: inputParts,
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema,
+        },
+      }));
+      return res;
+    } catch (schemaErr) {
+      if (schemaErr && /API key|quota|billing|401|403|429/i.test(schemaErr.message || '')) {
+        throw schemaErr;
+      }
+      const fallbackParts = inputParts.map((part, idx) => (
+        idx === 0 && part.type === 'text'
+          ? { type: 'text', text: part.text + jsonReminder }
+          : part
+      ));
+      return callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
+        model: m,
+        input: fallbackParts,
+      }));
+    }
+  }
+
+  function extractPlanBoundsNorm(plan) {
+    let minX = 1, minY = 1, maxX = 0, maxY = 0;
+    let foundAny = false;
+
+    const addPt = (x, y) => {
+      if (typeof x !== 'number' || typeof y !== 'number' || Number.isNaN(x) || Number.isNaN(y)) return;
+      const nx = clamp(x, 0, 1000) / 1000;
+      const ny = clamp(y, 0, 1000) / 1000;
+      foundAny = true;
+      if (nx < minX) minX = nx;
+      if (nx > maxX) maxX = nx;
+      if (ny < minY) minY = ny;
+      if (ny > maxY) maxY = ny;
+    };
+
+    const fb = plan && plan.focus_box;
+    if (Array.isArray(fb) && fb.length === 4) {
+      addPt(fb[1], fb[0]);
+      addPt(fb[3], fb[2]);
+    }
+    (plan && plan.strokes || []).forEach((st) => {
+      (st && st.points || []).forEach((p) => {
+        if (p && typeof p.x === 'number') addPt(p.x, p.y);
+        else if (Array.isArray(p) && p.length >= 2) addPt(p[0], p[1]);
+      });
+    });
+    (plan && plan.polygons || []).forEach((poly) => {
+      const pts = Array.isArray(poly) ? poly : (poly && poly.points || []);
+      pts.forEach((p) => {
+        if (p && typeof p.x === 'number') addPt(p.x, p.y);
+        else if (Array.isArray(p) && p.length >= 2) addPt(p[0], p[1]);
+      });
+    });
+    (plan && plan.boxes || []).forEach((b) => {
+      if (Array.isArray(b) && b.length === 4) {
+        addPt(b[1], b[0]);
+        addPt(b[3], b[2]);
+      }
+    });
+
+    if (!foundAny || maxX <= minX || maxY <= minY) return null;
+    return { minX, minY, maxX, maxY };
+  }
+
+  function buildZoomCropRect(bounds) {
+    if (!bounds) return null;
+    const bw = Math.max(0.02, bounds.maxX - bounds.minX);
+    const bh = Math.max(0.02, bounds.maxY - bounds.minY);
+    const areaRatio = bw * bh;
+    // Only zoom in if the target occupies < 38% of the frame (small/medium detail like jewelry, blemish, text, wire)
+    if (areaRatio >= 0.38) return null;
+
+    const padX = Math.max(bw * 0.72, 0.08);
+    const padY = Math.max(bh * 0.72, 0.08);
+    let x0 = clamp(bounds.minX - padX, 0, 1);
+    let y0 = clamp(bounds.minY - padY, 0, 1);
+    let x1 = clamp(bounds.maxX + padX, 0, 1);
+    let y1 = clamp(bounds.maxY + padY, 0, 1);
+
+    // Snap near image borders so chains/straps reaching the edge of frame are never clipped
+    if (bounds.minX < 0.08) x0 = 0;
+    if (bounds.minY < 0.08) y0 = 0;
+    if (bounds.maxX > 0.92) x1 = 1;
+    if (bounds.maxY > 0.92) y1 = 1;
+
+    // Guarantee minimum 22% crop dimension so Gemini has rich surrounding visual context
+    const minSpan = 0.22;
+    if (x1 - x0 < minSpan) {
+      const mid = (x0 + x1) * 0.5;
+      x0 = clamp(mid - minSpan * 0.5, 0, 1 - minSpan);
+      x1 = x0 + minSpan;
+    }
+    if (y1 - y0 < minSpan) {
+      const mid = (y0 + y1) * 0.5;
+      y0 = clamp(mid - minSpan * 0.5, 0, 1 - minSpan);
+      y1 = y0 + minSpan;
+    }
+
+    return {
+      x: x0,
+      y: y0,
+      w: Math.max(0.05, x1 - x0),
+      h: Math.max(0.05, y1 - y0),
+    };
+  }
+
+  function mapCropPlanToFull(cropPlan, cropRect, fullW, fullH) {
+    if (!cropRect) return cropPlan;
+    const widthScale = Math.min(cropRect.w * fullW, cropRect.h * fullH) / Math.max(1, Math.min(fullW, fullH));
+    const mapPt = (p) => {
+      const zx = p && typeof p.x === 'number' ? p.x : (Array.isArray(p) ? p[0] : 0);
+      const zy = p && typeof p.y === 'number' ? p.y : (Array.isArray(p) ? p[1] : 0);
+      return {
+        x: (cropRect.x + (clamp(zx, 0, 1000) / 1000) * cropRect.w) * 1000,
+        y: (cropRect.y + (clamp(zy, 0, 1000) / 1000) * cropRect.h) * 1000,
+      };
+    };
+
+    return Object.assign({}, cropPlan, {
+      strokes: (cropPlan.strokes || []).map((st) => ({
+        width: Math.max(6, (st.width || 28) * widthScale),
+        points: (st.points || []).map(mapPt),
+      })),
+      polygons: (cropPlan.polygons || []).map((poly) => {
+        const pts = Array.isArray(poly) ? poly : (poly && poly.points || []);
+        return { points: pts.map(mapPt) };
+      }),
+      boxes: (cropPlan.boxes || []).map((b) => {
+        if (!Array.isArray(b) || b.length !== 4) return b;
+        return [
+          (cropRect.y + (clamp(b[0], 0, 1000) / 1000) * cropRect.h) * 1000,
+          (cropRect.x + (clamp(b[1], 0, 1000) / 1000) * cropRect.w) * 1000,
+          (cropRect.y + (clamp(b[2], 0, 1000) / 1000) * cropRect.h) * 1000,
+          (cropRect.x + (clamp(b[3], 0, 1000) / 1000) * cropRect.w) * 1000,
+        ];
+      }),
+    });
+  }
+
+  function buildVisionRegionSchema() {
+    return {
       type: 'object',
       properties: {
         found: { type: 'boolean', description: 'Whether the target object/region requested by the user exists in the image.' },
@@ -835,13 +994,18 @@
           description: 'Use "remove" to erase objects/jewelry/blemishes/text/people; "recolor" to change color of clothing/lips/hair/sky; "blur" to blur a region/background; "brighten" to brighten/darken a specific region.',
         },
         summary_vi: { type: 'string', description: 'Short 1-sentence Vietnamese description of what you located and edited.' },
+        focus_box: {
+          type: 'array',
+          description: 'Tight bounding box [ymin, xmin, ymax, xmax] in 0..1000 enclosing ALL parts of the target object.',
+          items: { type: 'integer' },
+        },
         strokes: {
           type: 'array',
-          description: 'Polylines tracing thin or curved items (e.g., necklace chains, wires, straps, lines). Use 8 to 24 densely spaced points along the exact centerline.',
+          description: 'Polylines tracing thin or curved items (e.g., necklace chains, wires, straps, lines). Use 10 to 26 densely spaced points along the exact centerline.',
           items: {
             type: 'object',
             properties: {
-              width: { type: 'integer', description: 'Stroke thickness in 0..1000 image units (e.g., 16-24 for a thin necklace chain, 26-40 for thicker straps/wires).' },
+              width: { type: 'integer', description: 'Stroke thickness in 0..1000 image units (generously cover the item + its cast shadow).' },
               points: {
                 type: 'array',
                 items: {
@@ -859,7 +1023,7 @@
         },
         polygons: {
           type: 'array',
-          description: 'Tight closed polygons around solid items (e.g., pendant, blemish, logo, dress, face, background person).',
+          description: 'Closed polygons around solid items (e.g., pendant, charm, blemish, logo, dress, face, background person).',
           items: {
             type: 'object',
             properties: {
@@ -890,67 +1054,223 @@
       },
       required: ['found', 'action', 'summary_vi', 'strokes', 'polygons'],
     };
+  }
+
+  function hasAnyRegionShape(plan) {
+    if (!plan) return false;
+    const hasSt = Array.isArray(plan.strokes) && plan.strokes.some((s) => s && Array.isArray(s.points) && s.points.length > 0);
+    const hasPo = Array.isArray(plan.polygons) && plan.polygons.some((p) => {
+      const pts = Array.isArray(p) ? p : (p && p.points);
+      return Array.isArray(pts) && pts.length >= 3;
+    });
+    const hasBx = Array.isArray(plan.boxes) && plan.boxes.some((b) => Array.isArray(b) && b.length === 4);
+    return hasSt || hasPo || hasBx;
+  }
+
+  /**
+   * Free-Tier Automatic AI Object Removal & Regional Editing powered by Gemini 4 Hydrogen Vision!
+   * Uses a 2-stage Zoom-and-Crop pipeline for small objects (e.g. necklace chains, earrings, blemishes, wires)
+   * so Gemini traces every millimeter at native sharpness.
+   */
+  async function runGeminiVisionRegionEdit(prompt, renderedCanvas, apiKey, onProgress) {
+    const fullW = renderedCanvas.naturalWidth || renderedCanvas.width;
+    const fullH = renderedCanvas.naturalHeight || renderedCanvas.height;
+    const img = encodeSourceToBase64(renderedCanvas, 1024, 0.90);
+    const schema = buildVisionRegionSchema();
 
     const instruction = [
       'You are a precision computer-vision photo retouching engine.',
-      'Carefully inspect the image (including any white/black margins — coordinates MUST be relative to the ENTIRE image canvas from 0 to 1000).',
-      'Understand the user request even if it contains Vietnamese typing typos (e.g. "dây chyteenf" = "dây chuyền" = necklace).',
+      'Carefully inspect the ENTIRE image (including any white/black margins — coordinates MUST be relative to the ENTIRE image canvas from 0 to 1000).',
+      'Understand Vietnamese requests including typing typos (e.g. "dây chyteenf" = "dây chuyền" = necklace).',
       'Locate the EXACT target object(s) to edit:',
-      '- For thin/curved items like a necklace chain on the neck, trace the FULL V-shaped or curved chain carefully using 10-20 consecutive {x, y} points in `strokes` with `width` ~ 18-24, AND trace the hanging pendant/charm tightly in `polygons` (or a small stroke/circle). Keep the mask focused tightly on the jewelry itself and avoid touching clothing straps or hair.',
+      '- Always populate `focus_box` as [ymin, xmin, ymax, xmax] tightly enclosing the ENTIRE target object (all branches + shadows).',
+      '- For thin/curved items like a necklace chain on the neck, trace EVERY branch from its very top/start edge all the way down to the pendant using 12-24 consecutive {x, y} points in `strokes` with generous `width` (24-36), AND trace the hanging pendant/charm in `polygons`. Keep clear of clothing straps and hair.',
       '- For solid objects (blemishes, logos, people, clothing to recolor), trace a tight accurate polygon in `polygons`.',
       '- Double-check that `x` is left-to-right (0..1000) and `y` is top-to-bottom (0..1000).',
       `User request: "${prompt}"`,
     ].join('\n');
 
-    const jsonReminder = '\nReturn ONLY valid raw JSON matching: {"found": true/false, "action": "remove"|"recolor"|"blur"|"brighten", "summary_vi": "...", "strokes": [{"width": 20, "points": [{"x": 500, "y": 100}]}], "polygons": [{"points": [{"x": 500, "y": 100}]}], "boxes": [[ymin, xmin, ymax, xmax]], "targetHue": 0, "satDelta": 0, "lumDelta": 0, "blurStrength": 40}.';
+    const jsonReminder = '\nReturn ONLY valid raw JSON matching: {"found": true/false, "action": "remove"|"recolor"|"blur"|"brighten", "summary_vi": "...", "focus_box": [ymin, xmin, ymax, xmax], "strokes": [{"width": 28, "points": [{"x": 500, "y": 100}]}], "polygons": [{"points": [{"x": 500, "y": 100}]}], "boxes": [[ymin, xmin, ymax, xmax]]}.';
 
-    let data, model;
-    try {
-      const res = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
-        model: m,
-        input: [
-          { type: 'text', text: instruction },
-          { type: 'image', mime_type: img.mime_type, data: img.data },
-        ],
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          schema,
-        },
-      }));
-      data = res.data;
-      model = res.model;
-    } catch (schemaErr) {
-      // Defensive fallback if an endpoint/model rejects structured schema parameter
-      if (schemaErr && /API key|quota|billing|401|403|429/i.test(schemaErr.message || '')) {
-        throw schemaErr;
+    const pass1 = await callGeminiVisionJson(
+      apiKey,
+      [
+        { type: 'text', text: instruction },
+        { type: 'image', mime_type: img.mime_type, data: img.data },
+      ],
+      schema,
+      jsonReminder
+    );
+
+    const parsed1 = parseInteractionResponse(pass1.data);
+    let plan = parseJsonLoose(parsed1.text);
+    let cropRect = null;
+
+    // Stage 2: Automatic Zoom-and-Crop High-Res Refinement for small/fine objects!
+    if (plan && plan.found !== false) {
+      const bounds = extractPlanBoundsNorm(plan);
+      const candidateCrop = buildZoomCropRect(bounds);
+      if (candidateCrop && Math.max(fullW, fullH) >= 480) {
+        cropRect = candidateCrop;
+        if (typeof onProgress === 'function') {
+          onProgress('🔍 Đang phóng to vùng mục tiêu để tách nét siêu chính xác...');
+        }
+        try {
+          const zoomImg = encodeSourceToBase64(renderedCanvas, 1024, 0.93, cropRect);
+          const zoomInstruction = [
+            'You are a precision photo retouching engine inspecting a ZOOMED-IN CLOSE-UP crop of the target object.',
+            'Coordinates MUST be relative to THIS cropped image (x: left=0..right=1000, y: top=0..bottom=1000).',
+            'Trace EVERY SINGLE VISIBLE MILLIMETER of the target object so NOTHING is left behind:',
+            '- For a necklace/chain/wire/strap: trace BOTH left and right sides ALL THE WAY from where they enter the top/side border (or hair/skin edge) down to the center pendant, using dense points (14-26 points) and generous stroke width (width: 32-52 in this zoomed frame) to cover the metal chain AND its dark shadow on the skin.',
+            '- Trace any pendant, charm, clasp, or solid spot tightly in `polygons` (with slight padding around its shadow).',
+            '- Do NOT accidentally cover nearby dress straps, lace, or hair unless the user asked to remove them.',
+            `User request: "${prompt}"`,
+          ].join('\n');
+
+          const pass2 = await callGeminiVisionJson(
+            apiKey,
+            [
+              { type: 'text', text: zoomInstruction },
+              { type: 'image', mime_type: zoomImg.mime_type, data: zoomImg.data },
+            ],
+            schema,
+            jsonReminder
+          );
+          const parsed2 = parseInteractionResponse(pass2.data);
+          const zoomPlan = parseJsonLoose(parsed2.text);
+          if (zoomPlan && zoomPlan.found !== false && hasAnyRegionShape(zoomPlan)) {
+            const mappedZoom = mapCropPlanToFull(zoomPlan, cropRect, fullW, fullH);
+            mappedZoom.summary_vi = zoomPlan.summary_vi || plan.summary_vi;
+            mappedZoom.action = plan.action || zoomPlan.action || 'remove';
+            plan = mappedZoom;
+          }
+        } catch (_) {
+          // Graceful fallback: keep Pass 1 full-image plan if zoom pass fails or hits rate limit
+        }
       }
-      const res = await callWithModelFallback(apiKey, MODEL_COLOR_FALLBACKS, (m) => ({
-        model: m,
-        input: [
-          { type: 'text', text: instruction + jsonReminder },
-          { type: 'image', mime_type: img.mime_type, data: img.data },
-        ],
-      }));
-      data = res.data;
-      model = res.model;
     }
 
-    const parsed = parseInteractionResponse(data);
-    let rawJson = parsed.text;
-    const fenced = rawJson.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced) rawJson = fenced[1].trim();
-    const firstBrace = rawJson.indexOf('{');
-    const lastBrace = rawJson.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      rawJson = rawJson.slice(firstBrace, lastBrace + 1);
-    }
-
-    const plan = JSON.parse(rawJson);
     return {
       plan,
-      model,
-      message: plan.summary_vi || 'Gemini AI đã tự động nhận diện và xử lý vùng theo yêu cầu.',
+      cropRect,
+      model: pass1.model,
+      message: (plan && plan.summary_vi) || 'Gemini AI đã tự động nhận diện và xử lý vùng theo yêu cầu.',
+    };
+  }
+
+  /**
+   * Automatic Visual Self-Verification Pass:
+   * Compares BEFORE vs AFTER (zoomed into cropRect) and returns exact residual strokes/polygons
+   * if ANY faint trace, shadow, ghost line, or smudge of the removed object remains visible!
+   */
+  async function runGeminiVerifyCleanup(prompt, beforeCanvas, afterCanvas, cropRect, apiKey) {
+    const fullW = afterCanvas.naturalWidth || afterCanvas.width;
+    const fullH = afterCanvas.naturalHeight || afterCanvas.height;
+    const beforeImg = encodeSourceToBase64(beforeCanvas, 1024, 0.92, cropRect);
+    const afterImg = encodeSourceToBase64(afterCanvas, 1024, 0.92, cropRect);
+
+    const schema = {
+      type: 'object',
+      properties: {
+        clean: {
+          type: 'boolean',
+          description: 'True ONLY if Image 2 (AFTER) is 100% spotless with ZERO visible residue, faint dark line, shadow, dot, or smudge of the removed object. False if ANY subtle trace remains.',
+        },
+        note_vi: { type: 'string', description: 'Short Vietnamese note describing whether the edit is spotless or what residual trace was found.' },
+        strokes: {
+          type: 'array',
+          description: 'Polylines tracing ONLY the remaining faint lines, ghost chain streaks, shadows, or dark smudges still visible in Image 2 (AFTER). Coordinates in 0..1000 of Image 2.',
+          items: {
+            type: 'object',
+            properties: {
+              width: { type: 'integer', description: 'Generous cleanup stroke width in 0..1000 (e.g. 38-65) to wipe the entire residual streak & halo.' },
+              points: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    x: { type: 'integer' },
+                    y: { type: 'integer' },
+                  },
+                  required: ['x', 'y'],
+                },
+              },
+            },
+            required: ['width', 'points'],
+          },
+        },
+        polygons: {
+          type: 'array',
+          description: 'Closed polygons covering any remaining blotches, smudges, or leftover object fragments in Image 2 (AFTER). Coordinates in 0..1000 of Image 2.',
+          items: {
+            type: 'object',
+            properties: {
+              points: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    x: { type: 'integer' },
+                    y: { type: 'integer' },
+                  },
+                  required: ['x', 'y'],
+                },
+              },
+            },
+            required: ['points'],
+          },
+        },
+      },
+      required: ['clean', 'note_vi', 'strokes', 'polygons'],
+    };
+
+    const instruction = [
+      'You are a strict photo-retouching quality inspector comparing Image 1 (BEFORE) and Image 2 (AFTER).',
+      `The user requested: "${prompt}"`,
+      'Carefully zoom your attention onto EVERY pixel in Image 2 (AFTER) where the target object used to be in Image 1 (BEFORE):',
+      '1. Look closely for ANY leftover faint dark chain line, upper/lower missed tips near edges, shadow, gray smudge, blotch, or ghost outline still visible on the skin/background in Image 2.',
+      '2. If Image 2 is 100% clean, natural, and completely indistinguishable from never having the object, return {"clean": true, "note_vi": "...", "strokes": [], "polygons": []}.',
+      '3. If even a FAINT ghost streak, smudge, dot, or partial end remains in Image 2, return "clean": false and trace EVERY leftover spot generously in `strokes` (width: 40-68) and/or `polygons` in Image 2 coordinates (x: 0..1000 left-to-right, y: 0..1000 top-to-bottom), staying clear of unrelated hair or clothing straps.',
+    ].join('\n');
+
+    const jsonReminder = '\nReturn ONLY valid raw JSON: {"clean": true/false, "note_vi": "...", "strokes": [{"width": 48, "points": [{"x": 500, "y": 100}]}], "polygons": [{"points": [{"x": 500, "y": 100}]}]}.';
+
+    const res = await callGeminiVisionJson(
+      apiKey,
+      [
+        { type: 'text', text: instruction },
+        { type: 'image', mime_type: beforeImg.mime_type, data: beforeImg.data },
+        { type: 'image', mime_type: afterImg.mime_type, data: afterImg.data },
+      ],
+      schema,
+      jsonReminder
+    );
+
+    const parsed = parseInteractionResponse(res.data);
+    const verify = parseJsonLoose(parsed.text);
+    const isClean = Boolean(verify && verify.clean) || !hasAnyRegionShape(verify);
+
+    if (isClean) {
+      return { clean: true, plan: null, note_vi: (verify && verify.note_vi) || '' };
+    }
+
+    const mapped = mapCropPlanToFull(
+      {
+        found: true,
+        action: 'remove',
+        summary_vi: verify.note_vi || '',
+        strokes: verify.strokes || [],
+        polygons: verify.polygons || [],
+      },
+      cropRect,
+      fullW,
+      fullH
+    );
+
+    return {
+      clean: false,
+      plan: mapped,
+      note_vi: verify.note_vi || '',
     };
   }
 
@@ -965,5 +1285,6 @@
     runGeminiColorAI,
     runGeminiImageEdit,
     runGeminiVisionRegionEdit,
+    runGeminiVerifyCleanup,
   };
 })(window);

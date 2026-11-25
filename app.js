@@ -2452,7 +2452,7 @@
       setAiBusy(true);
 
       const rendered = P.renderPipeline(sourceImage, state, {
-        maxDim: 1280,
+        maxDim: 2200,
         needOriginal: false,
         includeFrame: false,
       }).processedCanvas;
@@ -2491,10 +2491,14 @@
         }
       }
 
-      // 2. Automatic Free-Tier Mode: Gemini 4 Hydrogen Vision locates exact object -> Auto Inpaint / Recolor / Blur!
-      updateChatMsg(loadingMsg, '✨ Gemini Vision đang tự dò chính xác vật thể trong ảnh và xử lý tự động...', { kind: 'loading' });
+      // 2. Automatic Free-Tier Precision Mode:
+      //    Stage 1: Locate target -> Stage 2: Zoom-in high-res trace -> Stage 3: Outlier-snap inpaint
+      //    -> Stage 4: Visual BEFORE/AFTER Self-Verification & automatic residue cleanup!
+      updateChatMsg(loadingMsg, '✨ Gemini Vision đang dò chính xác vật thể trên ảnh...', { kind: 'loading' });
       try {
-        const visionRes = await AI.runGeminiVisionRegionEdit(prompt, rendered, apiKey);
+        const visionRes = await AI.runGeminiVisionRegionEdit(prompt, rendered, apiKey, (stepText) => {
+          updateChatMsg(loadingMsg, stepText, { kind: 'loading' });
+        });
         const plan = visionRes.plan;
 
         if (!plan || plan.found === false) {
@@ -2504,6 +2508,7 @@
           return;
         }
 
+        updateChatMsg(loadingMsg, '🪄 Đang xóa sạch & tái tạo kết cấu nền tự nhiên...', { kind: 'loading' });
         const mappedPlan = mapVisionPlanToSource(plan, state.transform);
         const editResult = P.applyAiRegionEdit(sourceImage, mappedPlan);
 
@@ -2513,12 +2518,62 @@
           return;
         }
 
-        sourceImage = editResult.canvas;
+        let currentCanvas = editResult.canvas;
+        sourceImage = currentCanvas;
+        scheduleRender();
+
+        // Stage 4: Automatic BEFORE vs AFTER visual self-check for object removal (up to 2 polish passes)
+        let polishCount = 0;
+        const isRemoval = !plan.action || plan.action === 'remove';
+        if (isRemoval && typeof AI.runGeminiVerifyCleanup === 'function') {
+          for (let round = 1; round <= 2; round++) {
+            try {
+              updateChatMsg(
+                loadingMsg,
+                round === 1
+                  ? '🔎 Đang tự kiểm tra Trước/Sau để đảm bảo xóa sạch hoàn toàn...'
+                  : '🔎 Đang kiểm tra lại lần cuối cho mịn sạch tuyệt đối...',
+                { kind: 'loading' }
+              );
+              const afterRendered = P.renderPipeline(currentCanvas, state, {
+                maxDim: 2200,
+                needOriginal: false,
+                includeFrame: false,
+              }).processedCanvas;
+
+              const verify = await AI.runGeminiVerifyCleanup(
+                prompt,
+                rendered,
+                afterRendered,
+                visionRes.cropRect,
+                apiKey
+              );
+
+              if (!verify || verify.clean || !verify.plan) {
+                break;
+              }
+
+              updateChatMsg(loadingMsg, '✨ Phát hiện vết mờ còn sót — đang tự động xóa sạch tiếp...', { kind: 'loading' });
+              const mappedResidue = mapVisionPlanToSource(verify.plan, state.transform);
+              const cleaned = P.applyAiRegionEdit(currentCanvas, mappedResidue);
+              if (!cleaned.applied) break;
+              currentCanvas = cleaned.canvas;
+              sourceImage = currentCanvas;
+              scheduleRender();
+              polishCount++;
+            } catch (_) {
+              // Gracefully preserve already-healed result if verification hits rate limit or network error
+              break;
+            }
+          }
+        }
+
         generatePresetThumbnails();
         pushHistory();
         scheduleRender();
-        updateChatMsg(loadingMsg, `✨ ${visionRes.message}`, { showUndo: true });
-        showToast('AI đã tự động chỉnh sửa ảnh xong!');
+        const extraNote = polishCount > 0 ? ` (đã tự kiểm tra & dọn sạch ${polishCount} lượt vết sót)` : '';
+        updateChatMsg(loadingMsg, `✨ ${visionRes.message}${extraNote}`, { showUndo: true });
+        showToast('AI đã tự động xóa & hoàn thiện ảnh xong!');
       } catch (err) {
         updateChatMsg(loadingMsg, `Lỗi Gemini Vision AI: ${err.message || err}`, { kind: 'error', showEraseJump: true });
         showToast('Lỗi xử lý AI');

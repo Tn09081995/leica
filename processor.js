@@ -1775,9 +1775,19 @@
   /**
    * Core Multi-Scale Content-Aware Inpainting solver operating on an arbitrary full-res maskCanvas
    * within a tight ROI bounding box (rx, ry, rw, rh).
+   *
+   * Pro Upgrades:
+   * 1. Optional Local Outlier-Snap Mask Expansion: absorbs stray dark shadows / chain pixels
+   *    just outside the initial mask so they never contaminate the boundary.
+   * 2. Outer Clean Margin Dilation + Zero-Inward-Bleed Cosine Feather: keeps 100% opacity over
+   *    the entire target object and fades smoothly strictly in clean background outside.
+   * 3. Multi-Scale 2-Cycle SOR Harmonic Solver for seamless curved lighting gradients.
+   * 4. Mirrored Local High-Pass Texture Synthesis to match real camera grain & skin micro-texture.
    */
-  function inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, featherPx) {
-    const workScale = Math.min(1, 760 / Math.max(rw, rh));
+  function inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, featherPx, options) {
+    const opts = options || {};
+    const snapOutliers = Boolean(opts.snapOutliers);
+    const workScale = Math.min(1, 840 / Math.max(rw, rh));
     const ww = Math.max(8, Math.round(rw * workScale));
     const wh = Math.max(8, Math.round(rh * workScale));
 
@@ -1798,24 +1808,261 @@
     const srcPixels = imgData.data;
 
     const total = ww * wh;
+    const origR = new Float32Array(total);
+    const origG = new Float32Array(total);
+    const origB = new Float32Array(total);
     const mask = new Uint8Array(total);
-    const rBuf = new Float32Array(total);
-    const gBuf = new Float32Array(total);
-    const bBuf = new Float32Array(total);
 
     let maskedCount = 0;
     for (let i = 0; i < total; i++) {
-      const m = maskData[i * 4 + 3] > 28 ? 1 : 0;
+      const m = maskData[i * 4 + 3] > 24 ? 1 : 0;
       mask[i] = m;
       if (m) maskedCount++;
-      rBuf[i] = srcPixels[i * 4];
-      gBuf[i] = srcPixels[i * 4 + 1];
-      bBuf[i] = srcPixels[i * 4 + 2];
+      origR[i] = srcPixels[i * 4];
+      origG[i] = srcPixels[i * 4 + 1];
+      origB[i] = srcPixels[i * 4 + 2];
     }
     if (maskedCount === 0 || maskedCount === total) return out;
 
-    function solveLevel(w, h, rArr, gArr, bArr, mArr) {
-      if (w > 24 && h > 24) {
+    // --- Helper: BFS distance map from a binary seed mask ---
+    const bfsQueue = new Int32Array(total);
+    function computeDistanceFrom(seedMask, maxDist) {
+      const dist = new Int16Array(total);
+      dist.fill(-1);
+      let head = 0, tail = 0;
+      for (let i = 0; i < total; i++) {
+        if (seedMask[i]) {
+          dist[i] = 0;
+          bfsQueue[tail++] = i;
+        }
+      }
+      while (head < tail) {
+        const idx = bfsQueue[head++];
+        const d = dist[idx];
+        if (d >= maxDist) continue;
+        const nd = d + 1;
+        const x = idx % ww;
+        const y = (idx - x) / ww;
+        if (x > 0 && dist[idx - 1] === -1) { dist[idx - 1] = nd; bfsQueue[tail++] = idx - 1; }
+        if (x + 1 < ww && dist[idx + 1] === -1) { dist[idx + 1] = nd; bfsQueue[tail++] = idx + 1; }
+        if (y > 0 && dist[idx - ww] === -1) { dist[idx - ww] = nd; bfsQueue[tail++] = idx - ww; }
+        if (y + 1 < wh && dist[idx + ww] === -1) { dist[idx + ww] = nd; bfsQueue[tail++] = idx + ww; }
+      }
+      return dist;
+    }
+
+    // --- Stage 1: Smart Local Outlier-Snap Expansion (absorbs stray chain / shadow edges) ---
+    if (snapOutliers && ww >= 24 && wh >= 24) {
+      const maxSnapPx = Math.round(clamp(Math.min(ww, wh) * 0.048, 8, 22));
+      const cleanRingStart = 4;
+      const cleanRingEnd = maxSnapPx + 14;
+      const initDist = computeDistanceFrom(mask, cleanRingEnd);
+
+      // Compute local clean background reference via 2-pass separable box filter over clean pixels only
+      const rad = Math.max(10, Math.round(maxSnapPx * 1.15));
+      const hR = new Float32Array(total);
+      const hG = new Float32Array(total);
+      const hB = new Float32Array(total);
+      const hW = new Float32Array(total);
+
+      for (let y = 0; y < wh; y++) {
+        const row = y * ww;
+        let sr = 0, sg = 0, sb = 0, sw = 0;
+        for (let x = 0; x <= Math.min(rad, ww - 1); x++) {
+          const id = row + x;
+          if (!mask[id] && (initDist[id] === -1 || initDist[id] >= cleanRingStart)) {
+            sr += origR[id]; sg += origG[id]; sb += origB[id]; sw += 1;
+          }
+        }
+        for (let x = 0; x < ww; x++) {
+          const id = row + x;
+          hR[id] = sr; hG[id] = sg; hB[id] = sb; hW[id] = sw;
+          const addX = x + rad + 1;
+          if (addX < ww) {
+            const aid = row + addX;
+            if (!mask[aid] && (initDist[aid] === -1 || initDist[aid] >= cleanRingStart)) {
+              sr += origR[aid]; sg += origG[aid]; sb += origB[aid]; sw += 1;
+            }
+          }
+          const remX = x - rad;
+          if (remX >= 0) {
+            const rid = row + remX;
+            if (!mask[rid] && (initDist[rid] === -1 || initDist[rid] >= cleanRingStart)) {
+              sr -= origR[rid]; sg -= origG[rid]; sb -= origB[rid]; sw -= 1;
+            }
+          }
+        }
+      }
+
+      const refR = new Float32Array(total);
+      const refG = new Float32Array(total);
+      const refB = new Float32Array(total);
+      const refValid = new Uint8Array(total);
+
+      for (let x = 0; x < ww; x++) {
+        let sr = 0, sg = 0, sb = 0, sw = 0;
+        for (let y = 0; y <= Math.min(rad, wh - 1); y++) {
+          const id = y * ww + x;
+          sr += hR[id]; sg += hG[id]; sb += hB[id]; sw += hW[id];
+        }
+        for (let y = 0; y < wh; y++) {
+          const id = y * ww + x;
+          if (sw > 0.5) {
+            refR[id] = sr / sw;
+            refG[id] = sg / sw;
+            refB[id] = sb / sw;
+            refValid[id] = 1;
+          }
+          const addY = y + rad + 1;
+          if (addY < wh) {
+            const aid = addY * ww + x;
+            sr += hR[aid]; sg += hG[aid]; sb += hB[aid]; sw += hW[aid];
+          }
+          const remY = y - rad;
+          if (remY >= 0) {
+            const rid = remY * ww + x;
+            sr -= hR[rid]; sg -= hG[rid]; sb -= hB[rid]; sw -= hW[rid];
+          }
+        }
+      }
+
+      // Measure baseline texture variation in the clean outer ring
+      let varSum = 0;
+      let varCnt = 0;
+      for (let i = 0; i < total; i++) {
+        if (!mask[i] && refValid[i] && initDist[i] >= cleanRingStart && initDist[i] <= cleanRingEnd) {
+          const dr = origR[i] - refR[i];
+          const dg = origG[i] - refG[i];
+          const db = origB[i] - refB[i];
+          varSum += Math.sqrt(dr * dr + dg * dg + db * db);
+          varCnt++;
+        }
+      }
+      const cleanAvgDev = varCnt > 20 ? varSum / varCnt : 7.5;
+      const outlierThresh = clamp(cleanAvgDev * 2.15, 13.5, 34);
+      const maxAbsorb = Math.max(350, Math.round(maskedCount * 0.9));
+
+      // Absorb pixels inside the tight corridor that strongly deviate from local clean background
+      // (catches missed thin chains, jewelry shadows, faint dark ghosts right beside the stroke)
+      const visited = new Uint8Array(total);
+      let qHead = 0, qTail = 0;
+      for (let i = 0; i < total; i++) {
+        if (mask[i]) {
+          visited[i] = 1;
+          bfsQueue[qTail++] = i;
+        }
+      }
+
+      let absorbed = 0;
+      const dx8 = [-1, 1, 0, 0, -1, 1, -1, 1];
+      const dy8 = [0, 0, -1, 1, -1, -1, 1, 1];
+
+      // Seed strong outliers within 5px of the mask even if separated by a 1-3px skin sliver
+      for (let i = 0; i < total && absorbed < maxAbsorb; i++) {
+        if (mask[i] || !refValid[i]) continue;
+        const d = initDist[i];
+        if (d > 0 && d <= Math.min(6, maxSnapPx)) {
+          const dr = origR[i] - refR[i];
+          const dg = origG[i] - refG[i];
+          const db = origB[i] - refB[i];
+          const delta = Math.sqrt(dr * dr + dg * dg + db * db);
+          if (delta > outlierThresh * 1.15) {
+            mask[i] = 1;
+            visited[i] = 1;
+            bfsQueue[qTail++] = i;
+            absorbed++;
+          }
+        }
+      }
+
+      // Grow connected outlier region smoothly up to maxSnapPx
+      while (qHead < qTail && absorbed < maxAbsorb) {
+        const cur = bfsQueue[qHead++];
+        const cx = cur % ww;
+        const cy = (cur - cx) / ww;
+        for (let k = 0; k < 8; k++) {
+          const nx = cx + dx8[k];
+          const ny = cy + dy8[k];
+          if (nx < 0 || nx >= ww || ny < 0 || ny >= wh) continue;
+          const ni = ny * ww + nx;
+          if (visited[ni] || !refValid[ni]) continue;
+          visited[ni] = 1;
+          const d = initDist[ni];
+          if (d <= 0 || d > maxSnapPx) continue;
+          const dr = origR[ni] - refR[ni];
+          const dg = origG[ni] - refG[ni];
+          const db = origB[ni] - refB[ni];
+          const delta = Math.sqrt(dr * dr + dg * dg + db * db);
+          if (delta > outlierThresh) {
+            mask[ni] = 1;
+            bfsQueue[qTail++] = ni;
+            absorbed++;
+            if (absorbed >= maxAbsorb) break;
+          }
+        }
+      }
+
+      // Dilate core slightly by 2px so soft anti-aliased edges of absorbed chains are 100% covered
+      if (absorbed > 0) {
+        const coreDist = computeDistanceFrom(mask, 2);
+        for (let i = 0; i < total; i++) {
+          if (coreDist[i] > 0 && coreDist[i] <= 2) mask[i] = 1;
+        }
+      }
+    }
+
+    // --- Stage 2: Core Mask (100% opaque) + Clean Outer Feather Margin (zero inward bleed!) ---
+    const coreMask = new Uint8Array(mask);
+    const marginPx = Math.round(clamp((featherPx || 3) * workScale * 1.25, 3, 10));
+    const coreDist = computeDistanceFrom(coreMask, marginPx);
+
+    const solveMask = new Uint8Array(total);
+    let solveCount = 0;
+    for (let i = 0; i < total; i++) {
+      if (coreDist[i] >= 0 && coreDist[i] <= marginPx) {
+        solveMask[i] = 1;
+        solveCount++;
+      }
+    }
+    if (solveCount === 0 || solveCount === total) return out;
+
+    const rBuf = new Float32Array(origR);
+    const gBuf = new Float32Array(origG);
+    const bBuf = new Float32Array(origB);
+
+    // --- Stage 3: Multi-Scale Harmonic Solver (Coarse-to-Fine + 2nd V-Cycle Polish) ---
+    function runSor(w, h, rArr, gArr, bArr, mArr, iters, omega) {
+      for (let it = 0; it < iters; it++) {
+        for (let y = 1; y < h - 1; y++) {
+          const row = y * w;
+          for (let x = 1; x < w - 1; x++) {
+            const i = row + x;
+            if (!mArr[i]) continue;
+            const nr = (rArr[i - 1] + rArr[i + 1] + rArr[i - w] + rArr[i + w]) * 0.25;
+            const ng = (gArr[i - 1] + gArr[i + 1] + gArr[i - w] + gArr[i + w]) * 0.25;
+            const nb = (bArr[i - 1] + bArr[i + 1] + bArr[i - w] + bArr[i + w]) * 0.25;
+            rArr[i] += (nr - rArr[i]) * omega;
+            gArr[i] += (ng - gArr[i]) * omega;
+            bArr[i] += (nb - bArr[i]) * omega;
+          }
+        }
+        // Neumann boundary reflection for mask pixels touching image borders
+        for (let x = 0; x < w; x++) {
+          if (mArr[x]) { rArr[x] = rArr[x + w]; gArr[x] = gArr[x + w]; bArr[x] = bArr[x + w]; }
+          const bIdx = (h - 1) * w + x;
+          if (mArr[bIdx]) { rArr[bIdx] = rArr[bIdx - w]; gArr[bIdx] = gArr[bIdx - w]; bArr[bIdx] = bArr[bIdx - w]; }
+        }
+        for (let y = 0; y < h; y++) {
+          const lIdx = y * w;
+          if (mArr[lIdx]) { rArr[lIdx] = rArr[lIdx + 1]; gArr[lIdx] = gArr[lIdx + 1]; bArr[lIdx] = bArr[lIdx + 1]; }
+          const rIdx = y * w + (w - 1);
+          if (mArr[rIdx]) { rArr[rIdx] = rArr[rIdx - 1]; gArr[rIdx] = gArr[rIdx - 1]; bArr[rIdx] = bArr[rIdx - 1]; }
+        }
+      }
+    }
+
+    function solveLevel(w, h, rArr, gArr, bArr, mArr, useInit) {
+      if (w > 20 && h > 20) {
         const cw = Math.max(4, w >> 1);
         const ch = Math.max(4, h >> 1);
         const cTotal = cw * ch;
@@ -1834,8 +2081,10 @@
             const sx1 = Math.min(w - 1, sx + 1);
             const idxs = [sy * w + sx, sy * w + sx1, sy1 * w + sx, sy1 * w + sx1];
             let sr = 0, sg = 0, sb = 0, cnt = 0;
+            let ar = 0, ag = 0, ab = 0;
             for (let k = 0; k < 4; k++) {
               const id = idxs[k];
+              ar += rArr[id]; ag += gArr[id]; ab += bArr[id];
               if (!mArr[id]) {
                 sr += rArr[id];
                 sg += gArr[id];
@@ -1844,21 +2093,48 @@
               }
             }
             const ci = cy * cw + cx;
-            if (cnt > 0) {
+            // Require at least 2 known subpixels for cleaner coarse boundary sampling
+            if (cnt >= 2) {
               cR[ci] = sr / cnt;
               cG[ci] = sg / cnt;
               cB[ci] = sb / cnt;
               cM[ci] = 0;
               anyKnown = true;
             } else {
+              cR[ci] = useInit ? ar * 0.25 : 0;
+              cG[ci] = useInit ? ag * 0.25 : 0;
+              cB[ci] = useInit ? ab * 0.25 : 0;
               cM[ci] = 1;
               anyMasked = true;
             }
           }
         }
 
+        // Fallback if very small coarse grid had no cell with >=2 known pixels
+        if (!anyKnown) {
+          for (let cy = 0; cy < ch; cy++) {
+            const sy = Math.min(h - 1, cy * 2);
+            const sy1 = Math.min(h - 1, sy + 1);
+            for (let cx = 0; cx < cw; cx++) {
+              const sx = Math.min(w - 1, cx * 2);
+              const sx1 = Math.min(w - 1, sx + 1);
+              const idxs = [sy * w + sx, sy * w + sx1, sy1 * w + sx, sy1 * w + sx1];
+              let sr = 0, sg = 0, sb = 0, cnt = 0;
+              for (let k = 0; k < 4; k++) {
+                const id = idxs[k];
+                if (!mArr[id]) { sr += rArr[id]; sg += gArr[id]; sb += bArr[id]; cnt++; }
+              }
+              const ci = cy * cw + cx;
+              if (cnt > 0) {
+                cR[ci] = sr / cnt; cG[ci] = sg / cnt; cB[ci] = sb / cnt;
+                cM[ci] = 0; anyKnown = true;
+              }
+            }
+          }
+        }
+
         if (anyMasked && anyKnown) {
-          solveLevel(cw, ch, cR, cG, cB, cM);
+          solveLevel(cw, ch, cR, cG, cB, cM, useInit);
         }
 
         for (let y = 0; y < h; y++) {
@@ -1883,12 +2159,21 @@
             const w01 = (1 - wx) * wy;
             const w11 = wx * wy;
 
-            rArr[i] = cR[i00] * w00 + cR[i10] * w10 + cR[i01] * w01 + cR[i11] * w11;
-            gArr[i] = cG[i00] * w00 + cG[i10] * w10 + cG[i01] * w01 + cG[i11] * w11;
-            bArr[i] = cB[i00] * w00 + cB[i10] * w10 + cB[i01] * w01 + cB[i11] * w11;
+            const upR = cR[i00] * w00 + cR[i10] * w10 + cR[i01] * w01 + cR[i11] * w11;
+            const upG = cG[i00] * w00 + cG[i10] * w10 + cG[i01] * w01 + cG[i11] * w11;
+            const upB = cB[i00] * w00 + cB[i10] * w10 + cB[i01] * w01 + cB[i11] * w11;
+            if (useInit) {
+              rArr[i] = rArr[i] * 0.35 + upR * 0.65;
+              gArr[i] = gArr[i] * 0.35 + upG * 0.65;
+              bArr[i] = bArr[i] * 0.35 + upB * 0.65;
+            } else {
+              rArr[i] = upR;
+              gArr[i] = upG;
+              bArr[i] = upB;
+            }
           }
         }
-      } else {
+      } else if (!useInit) {
         let sr = 0, sg = 0, sb = 0, cnt = 0;
         for (let i = 0; i < w * h; i++) {
           if (!mArr[i]) { sr += rArr[i]; sg += gArr[i]; sb += bArr[i]; cnt++; }
@@ -1901,66 +2186,119 @@
         }
       }
 
-      const iters = w <= 64 ? 42 : 24;
-      const omega = 1.65;
-      for (let it = 0; it < iters; it++) {
-        for (let y = 1; y < h - 1; y++) {
-          const row = y * w;
-          for (let x = 1; x < w - 1; x++) {
-            const i = row + x;
-            if (!mArr[i]) continue;
-            const nr = (rArr[i - 1] + rArr[i + 1] + rArr[i - w] + rArr[i + w]) * 0.25;
-            const ng = (gArr[i - 1] + gArr[i + 1] + gArr[i - w] + gArr[i + w]) * 0.25;
-            const nb = (bArr[i - 1] + bArr[i + 1] + bArr[i - w] + bArr[i + w]) * 0.25;
-            rArr[i] += (nr - rArr[i]) * omega;
-            gArr[i] += (ng - gArr[i]) * omega;
-            bArr[i] += (nb - bArr[i]) * omega;
-          }
-        }
-        for (let x = 0; x < w; x++) {
-          if (mArr[x]) { rArr[x] = rArr[x + w]; gArr[x] = gArr[x + w]; bArr[x] = bArr[x + w]; }
-          const bIdx = (h - 1) * w + x;
-          if (mArr[bIdx]) { rArr[bIdx] = rArr[bIdx - w]; gArr[bIdx] = gArr[bIdx - w]; bArr[bIdx] = bArr[bIdx - w]; }
-        }
-        for (let y = 0; y < h; y++) {
-          const lIdx = y * w;
-          if (mArr[lIdx]) { rArr[lIdx] = rArr[lIdx + 1]; gArr[lIdx] = gArr[lIdx + 1]; bArr[lIdx] = bArr[lIdx + 1]; }
-          const rIdx = y * w + (w - 1);
-          if (mArr[rIdx]) { rArr[rIdx] = rArr[rIdx - 1]; gArr[rIdx] = gArr[rIdx - 1]; bArr[rIdx] = bArr[rIdx - 1]; }
-        }
-      }
+      const iters = w <= 64 ? 90 : (w <= 200 ? 52 : 36);
+      runSor(w, h, rArr, gArr, bArr, mArr, iters, 1.72);
     }
 
-    solveLevel(ww, wh, rBuf, gBuf, bBuf, mask);
+    solveLevel(ww, wh, rBuf, gBuf, bBuf, solveMask, false);
+    // Second multi-scale V-cycle polish removes any residual mid-frequency dark/light blotch
+    solveLevel(ww, wh, rBuf, gBuf, bBuf, solveMask, true);
 
+    // --- Stage 4: Mirrored Local High-Pass Texture Synthesis (real skin pores & camera grain) ---
+    // Compute nearest clean boundary pixel for every masked pixel via inward BFS
+    const nearIdx = new Int32Array(total);
+    nearIdx.fill(-1);
+    let nHead = 0, nTail = 0;
+    for (let i = 0; i < total; i++) {
+      if (!solveMask[i]) {
+        nearIdx[i] = i;
+        bfsQueue[nTail++] = i;
+      }
+    }
+    while (nHead < nTail) {
+      const cur = bfsQueue[nHead++];
+      const srcN = nearIdx[cur];
+      const cx = cur % ww;
+      const cy = (cur - cx) / ww;
+      if (cx > 0 && nearIdx[cur - 1] === -1) { nearIdx[cur - 1] = srcN; bfsQueue[nTail++] = cur - 1; }
+      if (cx + 1 < ww && nearIdx[cur + 1] === -1) { nearIdx[cur + 1] = srcN; bfsQueue[nTail++] = cur + 1; }
+      if (cy > 0 && nearIdx[cur - ww] === -1) { nearIdx[cur - ww] = srcN; bfsQueue[nTail++] = cur - ww; }
+      if (cy + 1 < wh && nearIdx[cur + ww] === -1) { nearIdx[cur + ww] = srcN; bfsQueue[nTail++] = cur + ww; }
+    }
+
+    // Measure local grain fallback amplitude on clean pixels
     let diffSum = 0;
     let diffCnt = 0;
     for (let y = 2; y < wh - 2; y += 2) {
       for (let x = 2; x < ww - 2; x += 2) {
         const i = y * ww + x;
-        if (!mask[i] && !mask[i + 1]) {
-          const d = Math.abs(rBuf[i] - rBuf[i + 1]) + Math.abs(gBuf[i] - gBuf[i + 1]) + Math.abs(bBuf[i] - bBuf[i + 1]);
+        if (!solveMask[i] && !solveMask[i + 1]) {
+          const d = Math.abs(origR[i] - origR[i + 1]) + Math.abs(origG[i] - origG[i + 1]) + Math.abs(origB[i] - origB[i + 1]);
           diffSum += d / 3;
           diffCnt++;
         }
       }
     }
-    const localGrain = clamp(diffCnt ? (diffSum / diffCnt) * 0.85 : 2.2, 1.0, 9.0);
+    const localGrain = clamp(diffCnt ? (diffSum / diffCnt) * 0.8 : 2.0, 0.8, 7.5);
+
+    // Build crisp per-pixel alpha mask (100% opaque on coreMask, smooth cosine ramp strictly outside)
+    const alphaCanvas = document.createElement('canvas');
+    alphaCanvas.width = ww;
+    alphaCanvas.height = wh;
+    const actx = alphaCanvas.getContext('2d');
+    const alphaImg = actx.createImageData(ww, wh);
+    const aData = alphaImg.data;
 
     for (let y = 0; y < wh; y++) {
       for (let x = 0; x < ww; x++) {
         const i = y * ww + x;
-        if (!mask[i]) continue;
-        let n = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
-        n = (n ^ (n >> 13)) * 1274126177;
-        n = n ^ (n >> 16);
-        const noise = (((n & 0xff) / 255) - 0.5) * 2 * localGrain;
-        srcPixels[i * 4]     = clamp255(rBuf[i] + noise);
-        srcPixels[i * 4 + 1] = clamp255(gBuf[i] + noise);
-        srcPixels[i * 4 + 2] = clamp255(bBuf[i] + noise);
+        if (!solveMask[i]) continue;
+
+        let tr = 0, tg = 0, tb = 0;
+        let usedRealTex = false;
+
+        // Mirror pixel across its nearest clean boundary pixel to sample real surrounding micro-texture
+        const bId = nearIdx[i];
+        if (bId >= 0) {
+          const bx = bId % ww;
+          const by = (bId - bx) / ww;
+          const dx = clamp(2 * bx - x, 2, ww - 3);
+          const dy = clamp(2 * by - y, 2, wh - 3);
+          const dId = dy * ww + dx;
+          if (!solveMask[dId] && !solveMask[dId - 1] && !solveMask[dId + 1] && !solveMask[dId - ww] && !solveMask[dId + ww]) {
+            // 5-tap local high-pass (pure grain / pore detail, zero low-frequency color bias)
+            const avgR = (origR[dId - 1] + origR[dId + 1] + origR[dId - ww] + origR[dId + ww] + origR[dId]) * 0.2;
+            const avgG = (origG[dId - 1] + origG[dId + 1] + origG[dId - ww] + origG[dId + ww] + origG[dId]) * 0.2;
+            const avgB = (origB[dId - 1] + origB[dId + 1] + origB[dId - ww] + origB[dId + ww] + origB[dId]) * 0.2;
+            const hr = origR[dId] - avgR;
+            const hg = origG[dId] - avgG;
+            const hb = origB[dId] - avgB;
+            if (Math.abs(hr) + Math.abs(hg) + Math.abs(hb) < 28) {
+              tr = clamp(hr * 0.85, -9, 9);
+              tg = clamp(hg * 0.85, -9, 9);
+              tb = clamp(hb * 0.85, -9, 9);
+              usedRealTex = true;
+            }
+          }
+        }
+
+        if (!usedRealTex) {
+          let n = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+          n = (n ^ (n >> 13)) * 1274126177;
+          n = n ^ (n >> 16);
+          const noise = (((n & 0xff) / 255) - 0.5) * 2 * localGrain;
+          tr = noise; tg = noise; tb = noise;
+        }
+
+        srcPixels[i * 4]     = clamp255(rBuf[i] + tr);
+        srcPixels[i * 4 + 1] = clamp255(gBuf[i] + tg);
+        srcPixels[i * 4 + 2] = clamp255(bBuf[i] + tb);
+
+        // Alpha = 255 everywhere inside coreMask; smooth cosine taper strictly in clean marginPx ring
+        let a = 1;
+        const dCore = coreDist[i];
+        if (dCore > 0) {
+          a = 0.5 * (1 + Math.cos((Math.PI * dCore) / (marginPx + 1)));
+        }
+        const aByte = clamp255(a * 255);
+        aData[i * 4] = 255;
+        aData[i * 4 + 1] = 255;
+        aData[i * 4 + 2] = 255;
+        aData[i * 4 + 3] = aByte;
       }
     }
     pctx.putImageData(imgData, 0, 0);
+    actx.putImageData(alphaImg, 0, 0);
 
     const comp = document.createElement('canvas');
     comp.width = rw;
@@ -1970,15 +2308,8 @@
     cctx.imageSmoothingQuality = 'high';
     cctx.drawImage(patchCanvas, 0, 0, rw, rh);
 
-    const featherMask = document.createElement('canvas');
-    featherMask.width = rw;
-    featherMask.height = rh;
-    const fctx = featherMask.getContext('2d');
-    fctx.filter = `blur(${Math.max(1.5, Math.min(8, featherPx || 3)).toFixed(1)}px)`;
-    fctx.drawImage(maskCanvas, 0, 0);
-
     cctx.globalCompositeOperation = 'destination-in';
-    cctx.drawImage(featherMask, 0, 0);
+    cctx.drawImage(alphaCanvas, 0, 0, rw, rh);
     cctx.globalCompositeOperation = 'source-over';
 
     octx.drawImage(comp, rx, ry);
@@ -2041,7 +2372,9 @@
       mctx.stroke();
     }
 
-    return inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, radiusPx * 0.16);
+    return inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, Math.max(3, radiusPx * 0.2), {
+      snapOutliers: true,
+    });
   }
 
   /**
@@ -2062,11 +2395,23 @@
     const strokes = Array.isArray(plan && plan.strokes) ? plan.strokes : [];
     const polygons = Array.isArray(plan && plan.polygons) ? plan.polygons : [];
     const boxes = Array.isArray(plan && plan.boxes) ? plan.boxes : [];
+    const action = (plan && plan.action) || 'remove';
+    const isRemove = action === 'remove';
 
     // Compute overall pixel bounding box across all AI shapes
     let minX = srcW, minY = srcH, maxX = 0, maxY = 0;
-    let maxStrokePx = 12;
+    let maxStrokePx = 14;
     let hasShape = false;
+
+    const getPtXY = (p) => {
+      if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+        return [(clamp(p.x, 0, 1000) / 1000) * srcW, (clamp(p.y, 0, 1000) / 1000) * srcH];
+      }
+      if (Array.isArray(p) && p.length >= 2) {
+        return [(clamp(p[0], 0, 1000) / 1000) * srcW, (clamp(p[1], 0, 1000) / 1000) * srcH];
+      }
+      return null;
+    };
 
     const expandPt = (x, y) => {
       hasShape = true;
@@ -2078,23 +2423,19 @@
 
     strokes.forEach((st) => {
       const pts = Array.isArray(st && st.points) ? st.points : [];
-      const wPx = Math.max(8, Math.round(((st.width || 18) / 1000) * minSide));
+      const wPx = Math.max(10, Math.round(((st.width || 24) / 1000) * minSide * (isRemove ? 1.45 : 1.15)));
       if (wPx > maxStrokePx) maxStrokePx = wPx;
       pts.forEach((p) => {
-        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-          expandPt((clamp(p.x, 0, 1000) / 1000) * srcW, (clamp(p.y, 0, 1000) / 1000) * srcH);
-        }
+        const xy = getPtXY(p);
+        if (xy) expandPt(xy[0], xy[1]);
       });
     });
 
     polygons.forEach((poly) => {
       const pts = Array.isArray(poly) ? poly : (Array.isArray(poly && poly.points) ? poly.points : []);
       pts.forEach((p) => {
-        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-          expandPt((clamp(p.x, 0, 1000) / 1000) * srcW, (clamp(p.y, 0, 1000) / 1000) * srcH);
-        } else if (Array.isArray(p) && p.length >= 2) {
-          expandPt((clamp(p[0], 0, 1000) / 1000) * srcW, (clamp(p[1], 0, 1000) / 1000) * srcH);
-        }
+        const xy = getPtXY(p);
+        if (xy) expandPt(xy[0], xy[1]);
       });
     });
 
@@ -2112,7 +2453,7 @@
 
     if (!hasShape) return { canvas: out, applied: false };
 
-    const pad = Math.max(32, Math.round(maxStrokePx * 2.4), Math.round(Math.max(maxX - minX, maxY - minY) * 0.25));
+    const pad = Math.max(44, Math.round(maxStrokePx * 2.8), Math.round(Math.max(maxX - minX, maxY - minY) * 0.35));
     const rx = Math.max(0, Math.floor(minX - maxStrokePx - pad));
     const ry = Math.max(0, Math.floor(minY - maxStrokePx - pad));
     const rw = Math.min(srcW - rx, Math.ceil(maxX + maxStrokePx + pad) - rx);
@@ -2132,18 +2473,21 @@
     strokes.forEach((st) => {
       const pts = Array.isArray(st && st.points) ? st.points : [];
       if (pts.length === 0) return;
-      // Add subtle +25% safety width so fine object shadows/halos are completely covered
-      const lineW = Math.max(8, Math.round(((st.width || 18) / 1000) * minSide * 1.25));
+      // Generous +45% safety width on remove so fine chain edges & shadows are completely covered
+      const lineW = Math.max(10, Math.round(((st.width || 24) / 1000) * minSide * (isRemove ? 1.45 : 1.15)));
       mctx.lineWidth = lineW;
+      const first = getPtXY(pts[0]);
+      if (!first) return;
       if (pts.length === 1) {
         mctx.beginPath();
-        mctx.arc((pts[0].x / 1000) * srcW - rx, (pts[0].y / 1000) * srcH - ry, lineW / 2, 0, Math.PI * 2);
+        mctx.arc(first[0] - rx, first[1] - ry, lineW / 2, 0, Math.PI * 2);
         mctx.fill();
       } else {
         mctx.beginPath();
-        mctx.moveTo((pts[0].x / 1000) * srcW - rx, (pts[0].y / 1000) * srcH - ry);
+        mctx.moveTo(first[0] - rx, first[1] - ry);
         for (let i = 1; i < pts.length; i++) {
-          mctx.lineTo((pts[i].x / 1000) * srcW - rx, (pts[i].y / 1000) * srcH - ry);
+          const xy = getPtXY(pts[i]);
+          if (xy) mctx.lineTo(xy[0] - rx, xy[1] - ry);
         }
         mctx.stroke();
       }
@@ -2153,16 +2497,22 @@
       const pts = Array.isArray(poly) ? poly : (Array.isArray(poly && poly.points) ? poly.points : []);
       if (pts.length < 3) return;
       mctx.beginPath();
-      pts.forEach((p, idx) => {
-        const px = ((typeof p.x === 'number' ? p.x : p[0]) / 1000) * srcW - rx;
-        const py = ((typeof p.y === 'number' ? p.y : p[1]) / 1000) * srcH - ry;
-        if (idx === 0) mctx.moveTo(px, py);
-        else mctx.lineTo(px, py);
+      let started = false;
+      pts.forEach((p) => {
+        const xy = getPtXY(p);
+        if (!xy) return;
+        if (!started) {
+          mctx.moveTo(xy[0] - rx, xy[1] - ry);
+          started = true;
+        } else {
+          mctx.lineTo(xy[0] - rx, xy[1] - ry);
+        }
       });
+      if (!started) return;
       mctx.closePath();
       mctx.fill();
-      // Slight 4px outer dilation so edge pixels don't bleed
-      mctx.lineWidth = Math.max(4, Math.round(minSide * 0.005));
+      // Outer safety dilation so edge pixels & cast shadows don't bleed back
+      mctx.lineWidth = Math.max(isRemove ? 8 : 4, Math.round(minSide * (isRemove ? 0.011 : 0.005)));
       mctx.stroke();
     });
 
@@ -2174,16 +2524,16 @@
           const bw = ((b[3] - b[1]) / 1000) * srcW;
           const bh = ((b[2] - b[0]) / 1000) * srcH;
           mctx.beginPath();
-          mctx.ellipse(bx + bw / 2, by + bh / 2, Math.max(4, bw * 0.54), Math.max(4, bh * 0.54), 0, 0, Math.PI * 2);
+          mctx.ellipse(bx + bw / 2, by + bh / 2, Math.max(6, bw * 0.56), Math.max(6, bh * 0.56), 0, 0, Math.PI * 2);
           mctx.fill();
         }
       });
     }
 
-    const action = (plan && plan.action) || 'remove';
-
-    if (action === 'remove') {
-      const healed = inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, Math.max(2, maxStrokePx * 0.18));
+    if (isRemove) {
+      const healed = inpaintFromMaskRoi(out, octx, maskCanvas, rx, ry, rw, rh, Math.max(3, maxStrokePx * 0.22), {
+        snapOutliers: true,
+      });
       return { canvas: healed, applied: true };
     }
 
