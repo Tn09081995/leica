@@ -789,10 +789,13 @@
           showToast('Hãy mở ảnh hoặc chọn Ảnh mẫu để áp dụng bộ lọc');
           return;
         }
-        state.presetId = preset.id;
-        syncControlsFromState();
-        pushHistory();
-        scheduleRender();
+        if (state.presetId !== preset.id) {
+          state.presetId = preset.id;
+          state.presetStrength = 100;
+          syncControlsFromState();
+          pushHistory();
+          scheduleRender();
+        }
       });
 
       els.presetGrid.appendChild(btn);
