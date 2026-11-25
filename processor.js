@@ -1772,6 +1772,291 @@
     return c;
   }
 
+  /**
+   * Fast Multi-Scale Content-Aware Inpainting (Magic Eraser / Healing Brush).
+   * Seamlessly removes painted objects (necklaces, wires, blemishes, logos) directly on the
+   * full-resolution source image by solving harmonic color diffusion coarse-to-fine + matching local grain.
+   *
+   * @param {HTMLImageElement|HTMLCanvasElement} source - Original/current full-res image
+   * @param {Array<{x:number,y:number}>} normPoints - Stroke points in normalized [0..1] source coordinates
+   * @param {number} normRadius - Brush radius relative to min(srcW, srcH)
+   * @returns {HTMLCanvasElement} New full-res canvas with the painted region cleanly healed
+   */
+  function inpaintStroke(source, normPoints, normRadius) {
+    const srcW = source.naturalWidth || source.width;
+    const srcH = source.naturalHeight || source.height;
+
+    const out = document.createElement('canvas');
+    out.width = srcW;
+    out.height = srcH;
+    const octx = out.getContext('2d', { willReadFrequently: true });
+    octx.drawImage(source, 0, 0, srcW, srcH);
+
+    if (!normPoints || normPoints.length === 0) return out;
+
+    const radiusPx = Math.max(4, Math.round(normRadius * Math.min(srcW, srcH)));
+
+    // 1. Compute tight local ROI bounding box (+ generous clean ring around stroke)
+    let minX = srcW, minY = srcH, maxX = 0, maxY = 0;
+    for (let i = 0; i < normPoints.length; i++) {
+      const px = normPoints[i].x * srcW;
+      const py = normPoints[i].y * srcH;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+
+    const pad = Math.max(24, Math.round(radiusPx * 2.2));
+    const rx = Math.max(0, Math.floor(minX - radiusPx - pad));
+    const ry = Math.max(0, Math.floor(minY - radiusPx - pad));
+    const rw = Math.min(srcW - rx, Math.ceil(maxX + radiusPx + pad) - rx);
+    const rh = Math.min(srcH - ry, Math.ceil(maxY + radiusPx + pad) - ry);
+    if (rw < 4 || rh < 4) return out;
+
+    // 2. Rasterize painted mask onto ROI canvas
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = rw;
+    maskCanvas.height = rh;
+    const mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+    mctx.lineCap = 'round';
+    mctx.lineJoin = 'round';
+    mctx.strokeStyle = '#ffffff';
+    mctx.fillStyle = '#ffffff';
+    mctx.lineWidth = radiusPx * 2;
+
+    if (normPoints.length === 1) {
+      mctx.beginPath();
+      mctx.arc(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry, radiusPx, 0, Math.PI * 2);
+      mctx.fill();
+    } else {
+      mctx.beginPath();
+      mctx.moveTo(normPoints[0].x * srcW - rx, normPoints[0].y * srcH - ry);
+      for (let i = 1; i < normPoints.length; i++) {
+        mctx.lineTo(normPoints[i].x * srcW - rx, normPoints[i].y * srcH - ry);
+      }
+      mctx.stroke();
+    }
+
+    // Limit working patch resolution to max 720px on longest side for instant <60ms speed,
+    // then composite smoothly back at full native resolution
+    const workScale = Math.min(1, 720 / Math.max(rw, rh));
+    const ww = Math.max(8, Math.round(rw * workScale));
+    const wh = Math.max(8, Math.round(rh * workScale));
+
+    const patchCanvas = document.createElement('canvas');
+    patchCanvas.width = ww;
+    patchCanvas.height = wh;
+    const pctx = patchCanvas.getContext('2d', { willReadFrequently: true });
+    pctx.drawImage(out, rx, ry, rw, rh, 0, 0, ww, wh);
+
+    const wMaskCanvas = document.createElement('canvas');
+    wMaskCanvas.width = ww;
+    wMaskCanvas.height = wh;
+    const wmctx = wMaskCanvas.getContext('2d', { willReadFrequently: true });
+    wmctx.drawImage(maskCanvas, 0, 0, ww, wh);
+
+    const imgData = pctx.getImageData(0, 0, ww, wh);
+    const maskData = wmctx.getImageData(0, 0, ww, wh).data;
+    const srcPixels = imgData.data;
+
+    const total = ww * wh;
+    const mask = new Uint8Array(total);
+    const rBuf = new Float32Array(total);
+    const gBuf = new Float32Array(total);
+    const bBuf = new Float32Array(total);
+
+    let maskedCount = 0;
+    for (let i = 0; i < total; i++) {
+      const m = maskData[i * 4 + 3] > 28 ? 1 : 0;
+      mask[i] = m;
+      if (m) maskedCount++;
+      rBuf[i] = srcPixels[i * 4];
+      gBuf[i] = srcPixels[i * 4 + 1];
+      bBuf[i] = srcPixels[i * 4 + 2];
+    }
+    if (maskedCount === 0 || maskedCount === total) return out;
+
+    // 3. Build Multi-Scale Coarse-to-Fine Pyramid so large/wide holes fill seamlessly in milliseconds
+    function solveLevel(w, h, rArr, gArr, bArr, mArr) {
+      if (w > 24 && h > 24) {
+        const cw = Math.max(4, w >> 1);
+        const ch = Math.max(4, h >> 1);
+        const cTotal = cw * ch;
+        const cR = new Float32Array(cTotal);
+        const cG = new Float32Array(cTotal);
+        const cB = new Float32Array(cTotal);
+        const cM = new Uint8Array(cTotal);
+
+        let anyMasked = false;
+        let anyKnown = false;
+        for (let cy = 0; cy < ch; cy++) {
+          const sy = Math.min(h - 1, cy * 2);
+          const sy1 = Math.min(h - 1, sy + 1);
+          for (let cx = 0; cx < cw; cx++) {
+            const sx = Math.min(w - 1, cx * 2);
+            const sx1 = Math.min(w - 1, sx + 1);
+            const idxs = [sy * w + sx, sy * w + sx1, sy1 * w + sx, sy1 * w + sx1];
+            let sr = 0, sg = 0, sb = 0, cnt = 0;
+            for (let k = 0; k < 4; k++) {
+              const id = idxs[k];
+              if (!mArr[id]) {
+                sr += rArr[id];
+                sg += gArr[id];
+                sb += bArr[id];
+                cnt++;
+              }
+            }
+            const ci = cy * cw + cx;
+            if (cnt > 0) {
+              cR[ci] = sr / cnt;
+              cG[ci] = sg / cnt;
+              cB[ci] = sb / cnt;
+              cM[ci] = 0;
+              anyKnown = true;
+            } else {
+              cM[ci] = 1;
+              anyMasked = true;
+            }
+          }
+        }
+
+        if (anyMasked && anyKnown) {
+          solveLevel(cw, ch, cR, cG, cB, cM);
+        }
+
+        // Bilinearly upsample coarse solution to initialize masked pixels at this level
+        for (let y = 0; y < h; y++) {
+          const fy = (y + 0.5) * 0.5 - 0.5;
+          const y0 = clamp(Math.floor(fy), 0, ch - 1);
+          const y1 = Math.min(ch - 1, y0 + 1);
+          const wy = clamp(fy - y0, 0, 1);
+          for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            if (!mArr[i]) continue;
+            const fx = (x + 0.5) * 0.5 - 0.5;
+            const x0 = clamp(Math.floor(fx), 0, cw - 1);
+            const x1 = Math.min(cw - 1, x0 + 1);
+            const wx = clamp(fx - x0, 0, 1);
+
+            const i00 = y0 * cw + x0;
+            const i10 = y0 * cw + x1;
+            const i01 = y1 * cw + x0;
+            const i11 = y1 * cw + x1;
+            const w00 = (1 - wx) * (1 - wy);
+            const w10 = wx * (1 - wy);
+            const w01 = (1 - wx) * wy;
+            const w11 = wx * wy;
+
+            rArr[i] = cR[i00] * w00 + cR[i10] * w10 + cR[i01] * w01 + cR[i11] * w11;
+            gArr[i] = cG[i00] * w00 + cG[i10] * w10 + cG[i01] * w01 + cG[i11] * w11;
+            bArr[i] = cB[i00] * w00 + cB[i10] * w10 + cB[i01] * w01 + cB[i11] * w11;
+          }
+        }
+      } else {
+        // Base level: initialize masked pixels with average of clean boundary pixels
+        let sr = 0, sg = 0, sb = 0, cnt = 0;
+        for (let i = 0; i < w * h; i++) {
+          if (!mArr[i]) { sr += rArr[i]; sg += gArr[i]; sb += bArr[i]; cnt++; }
+        }
+        const mr = cnt ? sr / cnt : 128;
+        const mg = cnt ? sg / cnt : 128;
+        const mb = cnt ? sb / cnt : 128;
+        for (let i = 0; i < w * h; i++) {
+          if (mArr[i]) { rArr[i] = mr; gArr[i] = mg; bArr[i] = mb; }
+        }
+      }
+
+      // Gauss-Seidel SOR (Successive Over-Relaxation) harmonic smoothing inside mask
+      const iters = w <= 64 ? 40 : 22;
+      const omega = 1.65;
+      for (let it = 0; it < iters; it++) {
+        for (let y = 1; y < h - 1; y++) {
+          const row = y * w;
+          for (let x = 1; x < w - 1; x++) {
+            const i = row + x;
+            if (!mArr[i]) continue;
+            const nr = (rArr[i - 1] + rArr[i + 1] + rArr[i - w] + rArr[i + w]) * 0.25;
+            const ng = (gArr[i - 1] + gArr[i + 1] + gArr[i - w] + gArr[i + w]) * 0.25;
+            const nb = (bArr[i - 1] + bArr[i + 1] + bArr[i - w] + bArr[i + w]) * 0.25;
+            rArr[i] += (nr - rArr[i]) * omega;
+            gArr[i] += (ng - gArr[i]) * omega;
+            bArr[i] += (nb - bArr[i]) * omega;
+          }
+        }
+        // Handle borders cleanly
+        for (let x = 0; x < w; x++) {
+          if (mArr[x]) { rArr[x] = rArr[x + w]; gArr[x] = gArr[x + w]; bArr[x] = bArr[x + w]; }
+          const bIdx = (h - 1) * w + x;
+          if (mArr[bIdx]) { rArr[bIdx] = rArr[bIdx - w]; gArr[bIdx] = gArr[bIdx - w]; bArr[bIdx] = bArr[bIdx - w]; }
+        }
+        for (let y = 0; y < h; y++) {
+          const lIdx = y * w;
+          if (mArr[lIdx]) { rArr[lIdx] = rArr[lIdx + 1]; gArr[lIdx] = gArr[lIdx + 1]; bArr[lIdx] = bArr[lIdx + 1]; }
+          const rIdx = y * w + (w - 1);
+          if (mArr[rIdx]) { rArr[rIdx] = rArr[rIdx - 1]; gArr[rIdx] = gArr[rIdx - 1]; bArr[rIdx] = bArr[rIdx - 1]; }
+        }
+      }
+    }
+
+    solveLevel(ww, wh, rBuf, gBuf, bBuf, mask);
+
+    // 4. Measure natural local sensor grain from clean ring surrounding the mask so skin texture matches seamlessly
+    let diffSum = 0;
+    let diffCnt = 0;
+    for (let y = 2; y < wh - 2; y += 2) {
+      for (let x = 2; x < ww - 2; x += 2) {
+        const i = y * ww + x;
+        if (!mask[i] && !mask[i + 1]) {
+          const d = Math.abs(rBuf[i] - rBuf[i + 1]) + Math.abs(gBuf[i] - gBuf[i + 1]) + Math.abs(bBuf[i] - bBuf[i + 1]);
+          diffSum += d / 3;
+          diffCnt++;
+        }
+      }
+    }
+    const localGrain = clamp(diffCnt ? (diffSum / diffCnt) * 0.85 : 2.5, 1.0, 9.5);
+
+    // Write healed pixels with subtle matched micro-grain
+    for (let y = 0; y < wh; y++) {
+      for (let x = 0; x < ww; x++) {
+        const i = y * ww + x;
+        if (!mask[i]) continue;
+        let n = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+        n = (n ^ (n >> 13)) * 1274126177;
+        n = n ^ (n >> 16);
+        const noise = (((n & 0xff) / 255) - 0.5) * 2 * localGrain;
+        srcPixels[i * 4]     = clamp255(rBuf[i] + noise);
+        srcPixels[i * 4 + 1] = clamp255(gBuf[i] + noise);
+        srcPixels[i * 4 + 2] = clamp255(bBuf[i] + noise);
+      }
+    }
+    pctx.putImageData(imgData, 0, 0);
+
+    // 5. Soft feathered composite back onto full-res output canvas
+    const comp = document.createElement('canvas');
+    comp.width = rw;
+    comp.height = rh;
+    const cctx = comp.getContext('2d');
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.drawImage(patchCanvas, 0, 0, rw, rh);
+
+    // Soft feather mask edge so transition is completely invisible
+    const featherMask = document.createElement('canvas');
+    featherMask.width = rw;
+    featherMask.height = rh;
+    const fctx = featherMask.getContext('2d');
+    fctx.filter = `blur(${Math.max(1.5, Math.min(6, radiusPx * 0.16)).toFixed(1)}px)`;
+    fctx.drawImage(maskCanvas, 0, 0);
+
+    cctx.globalCompositeOperation = 'destination-in';
+    cctx.drawImage(featherMask, 0, 0);
+    cctx.globalCompositeOperation = 'source-over';
+
+    octx.drawImage(comp, rx, ry);
+    return out;
+  }
+
   global.LuminaProcessor = {
     DEFAULT_ADJUSTMENTS,
     SLIDER_GROUPS,
@@ -1781,6 +2066,7 @@
     getEffectiveParams,
     renderPipeline,
     analyzeAutoEnhance,
+    inpaintStroke,
     drawHistogram,
     generateSampleImage,
   };

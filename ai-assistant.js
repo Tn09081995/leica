@@ -767,23 +767,37 @@
       `User request: ${prompt}`,
     ].join('\n');
 
-    const { data } = await callWithModelFallback(apiKey, MODEL_IMAGE_FALLBACKS, (m) => {
-      const b = {
-        model: m,
-        input: [
-          { type: 'text', text: instruction },
-          { type: 'image', mime_type: img.mime_type, data: img.data },
-        ],
-        response_format: [
-          { type: 'text' },
-          { type: 'image' },
-        ],
-      };
-      if (previousInteractionId && m === MODEL_IMAGE_AI) {
-        b.previous_interaction_id = previousInteractionId;
+    let data;
+    try {
+      const res = await callWithModelFallback(apiKey, MODEL_IMAGE_FALLBACKS, (m) => {
+        const b = {
+          model: m,
+          input: [
+            { type: 'text', text: instruction },
+            { type: 'image', mime_type: img.mime_type, data: img.data },
+          ],
+          response_format: [
+            { type: 'text' },
+            { type: 'image' },
+          ],
+        };
+        if (previousInteractionId && m === MODEL_IMAGE_AI) {
+          b.previous_interaction_id = previousInteractionId;
+        }
+        return b;
+      });
+      data = res.data;
+    } catch (err) {
+      const msg = (err && err.message) || '';
+      if (/limit:\s*0|Free Tier|rate limit|quota/i.test(msg)) {
+        const friendly = new Error(
+          'Google giới hạn 0 lượt/ngày cho AI vẽ lại ảnh trên gói Free Tier (cần bật Billing trên AI Studio). Bạn hãy bấm "Tẩy vật thể" miễn phí để tô trực tiếp lên dây chuyền/vật thừa và xóa ngay!'
+        );
+        friendly.isFreeTierImageLimit = true;
+        throw friendly;
       }
-      return b;
-    });
+      throw err;
+    }
     const parsed = parseInteractionResponse(data);
     if (!parsed.image || !parsed.image.data) {
       throw new Error(parsed.text || 'Gemini không trả về ảnh kết quả cho yêu cầu này. Hãy thử mô tả cụ thể hơn.');

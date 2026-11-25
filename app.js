@@ -138,6 +138,16 @@
     aiKeyTestBtn: document.getElementById('aiKeyTestBtn'),
     aiKeyTestStatus: document.getElementById('aiKeyTestStatus'),
     aiKeySaveBtn: document.getElementById('aiKeySaveBtn'),
+
+    // Magic Eraser elements
+    aiChatView: document.getElementById('aiChatView'),
+    aiEraseView: document.getElementById('aiEraseView'),
+    aiQuickEraseJumpBtn: document.getElementById('aiQuickEraseJumpBtn'),
+    eraserCanvas: document.getElementById('eraserCanvas'),
+    brushCursor: document.getElementById('brushCursor'),
+    eraserSize: document.getElementById('eraserSize'),
+    valEraserSize: document.getElementById('val-eraserSize'),
+    eraserUndoBtn: document.getElementById('eraserUndoBtn'),
   };
 
   // --- App State ---
@@ -175,9 +185,10 @@
   let historyIndex = -1;
 
   // AI transient state
-  let aiMode = 'color'; // 'color' | 'generative'
+  let aiMode = 'color'; // 'color' | 'erase' | 'generative'
   let aiBusy = false;
   let aiPrevInteractionId = null;
+  let eraserBrushPx = 22;
 
   // View / UI transient state
   let activeTab = 'presets';
@@ -234,6 +245,7 @@
     const id = input.id;
     if (id === 'mobileAdjRange') return formatSliderValue(activeMobileTool, val);
     if (id === 'presetStrength' || id === 'frameSize' || id === 'exportQuality') return `${val}%`;
+    if (id === 'eraserSize') return `${val}px`;
     if (id === 'straighten') return `${val}°`;
     if (id === 'hslHue' || id === 'hslSat' || id === 'hslLum') return val > 0 ? `+${val}` : String(val);
     if (id.startsWith('adj-')) return formatSliderValue(id.slice(4), val);
@@ -245,6 +257,7 @@
     if (id === 'presetStrength') return 100;
     if (id === 'frameSize') return 6;
     if (id === 'exportQuality') return 92;
+    if (id === 'eraserSize') return 22;
     return 0;
   }
 
@@ -1019,6 +1032,7 @@
     if (!sourceImage) return;
 
     const inCropMode = activeTab === 'crop';
+    const inEraseMode = activeTab === 'ai' && aiMode === 'erase';
     const renderState = cloneState(state);
 
     // When in Crop tab, show uncropped frame (without outer photo border) so user can freely adjust crop
@@ -1031,7 +1045,7 @@
     const result = P.renderPipeline(sourceImage, renderState, {
       maxDim: dynamicMaxDim,
       needOriginal: needOrig,
-      includeFrame: !inCropMode,
+      includeFrame: !inCropMode && !inEraseMode,
     });
 
     // If sourceImage was replaced by Gemini Generative AI, compare against true originalSourceImage!
@@ -1081,6 +1095,8 @@
     if (inCropMode) {
       updateCropBoxStyle();
     }
+
+    updateEraserOverlayVisibility();
   }
 
   function fitCanvasToViewport() {
@@ -1356,7 +1372,7 @@
 
     els.stageContainer.addEventListener('pointerdown', (e) => {
       if (!sourceImage || zoom <= 1) return;
-      if (e.target.closest('.split-handle') || e.target.closest('.crop-box')) return;
+      if (e.target.closest('.split-handle') || e.target.closest('.crop-box') || e.target.closest('.eraser-overlay')) return;
       panning = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -1401,6 +1417,7 @@
       pane.classList.toggle('active', pane.id === `tab-${tabName}`);
     });
     updateCropOverlayVisibility();
+    updateEraserOverlayVisibility();
     scheduleRender();
   }
 
@@ -1867,24 +1884,224 @@
   }
 
   function setAiMode(mode) {
-    aiMode = mode === 'generative' ? 'generative' : 'color';
+    aiMode = mode === 'generative' ? 'generative' : mode === 'erase' ? 'erase' : 'color';
     if (els.aiModeTabs) {
       els.aiModeTabs.querySelectorAll('.seg-btn').forEach((b) => {
         b.classList.toggle('active', b.dataset.aimode === aiMode);
       });
     }
+    const isErase = aiMode === 'erase';
+    if (els.aiChatView) els.aiChatView.classList.toggle('hidden', isErase);
+    if (els.aiEraseView) els.aiEraseView.classList.toggle('hidden', !isErase);
+
     if (els.aiPromptInput) {
       els.aiPromptInput.placeholder = aiMode === 'generative'
         ? 'Mô tả biến đổi ảnh (VD: xóa người nền sau, đổi nền biển hoàng hôn...)'
         : 'Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, trắng hồng da, màu Leica)';
     }
+    updateEraserOverlayVisibility();
+    scheduleRender();
   }
 
-  function setAiReply(msg, kind) {
+  function setAiReply(msg, kind, showEraseJump) {
     if (!els.aiReplyBox || !els.aiReplyText) return;
     els.aiReplyBox.classList.toggle('is-error', kind === 'error');
     els.aiReplyBox.classList.toggle('is-loading', kind === 'loading');
     els.aiReplyText.textContent = msg;
+    if (els.aiQuickEraseJumpBtn) {
+      els.aiQuickEraseJumpBtn.classList.toggle('hidden', !showEraseJump);
+    }
+  }
+
+  // --- Free Client-Side Magic Eraser (Tẩy vật thể) ---
+  function updateEraserOverlayVisibility() {
+    if (!els.eraserCanvas) return;
+    const active = activeTab === 'ai' && aiMode === 'erase' && Boolean(sourceImage) && !splitCompare;
+    els.eraserCanvas.classList.toggle('hidden', !active);
+    if (!active && els.brushCursor) {
+      els.brushCursor.classList.add('hidden');
+    }
+    if (active) {
+      const w = parseInt(els.previewCanvas.style.width, 10) || els.previewCanvas.clientWidth || 300;
+      const h = parseInt(els.previewCanvas.style.height, 10) || els.previewCanvas.clientHeight || 300;
+      if (els.eraserCanvas.width !== w || els.eraserCanvas.height !== h) {
+        els.eraserCanvas.width = w;
+        els.eraserCanvas.height = h;
+      }
+    }
+  }
+
+  /**
+   * Maps a normalized [0..1] point on the displayed (cropped/rotated/flipped) canvas
+   * back to normalized [0..1] coordinates on the underlying sourceImage.
+   */
+  function displayToSourceNorm(u, v, transform) {
+    const crop = (transform && transform.crop) || { x: 0, y: 0, w: 1, h: 1 };
+    let x = crop.x + u * crop.w;
+    let y = crop.y + v * crop.h;
+
+    if (transform && transform.flipH) x = 1 - x;
+    if (transform && transform.flipV) y = 1 - y;
+
+    const rot = (((transform && transform.rotate) || 0) % 360 + 360) % 360;
+    if (rot === 90) {
+      const nx = y;
+      const ny = 1 - x;
+      x = nx; y = ny;
+    } else if (rot === 180) {
+      x = 1 - x;
+      y = 1 - y;
+    } else if (rot === 270) {
+      const nx = 1 - y;
+      const ny = x;
+      x = nx; y = ny;
+    }
+
+    return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
+  }
+
+  function initMagicEraser() {
+    if (!els.eraserCanvas) return;
+    let drawing = false;
+    let dispPoints = [];
+
+    const drawStrokeOverlay = () => {
+      const ctx = els.eraserCanvas.getContext('2d');
+      ctx.clearRect(0, 0, els.eraserCanvas.width, els.eraserCanvas.height);
+      if (dispPoints.length === 0) return;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(61, 214, 138, 0.58)';
+      ctx.fillStyle = 'rgba(61, 214, 138, 0.58)';
+      ctx.lineWidth = eraserBrushPx;
+      if (dispPoints.length === 1) {
+        ctx.beginPath();
+        ctx.arc(dispPoints[0].cx, dispPoints[0].cy, eraserBrushPx / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(dispPoints[0].cx, dispPoints[0].cy);
+        for (let i = 1; i < dispPoints.length; i++) {
+          ctx.lineTo(dispPoints[i].cx, dispPoints[i].cy);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
+    const getCanvasPos = (e) => {
+      const rect = els.eraserCanvas.getBoundingClientRect();
+      const u = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+      const v = clamp((e.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+      return {
+        u,
+        v,
+        cx: u * els.eraserCanvas.width,
+        cy: v * els.eraserCanvas.height,
+        rect,
+      };
+    };
+
+    const updateCursor = (e) => {
+      if (!els.brushCursor) return;
+      const rect = els.eraserCanvas.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * els.eraserCanvas.offsetWidth;
+      const y = ((e.clientY - rect.top) / Math.max(1, rect.height)) * els.eraserCanvas.offsetHeight;
+      els.brushCursor.style.width = `${eraserBrushPx}px`;
+      els.brushCursor.style.height = `${eraserBrushPx}px`;
+      els.brushCursor.style.left = `${x}px`;
+      els.brushCursor.style.top = `${y}px`;
+      els.brushCursor.classList.remove('hidden');
+    };
+
+    els.eraserCanvas.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse') updateCursor(e);
+    });
+
+    els.eraserCanvas.addEventListener('pointerleave', () => {
+      if (!drawing && els.brushCursor) els.brushCursor.classList.add('hidden');
+    });
+
+    els.eraserCanvas.addEventListener('pointerdown', (e) => {
+      if (!sourceImage) return;
+      if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      drawing = true;
+      dispPoints = [];
+      try {
+        els.eraserCanvas.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      const pos = getCanvasPos(e);
+      dispPoints.push(pos);
+      updateCursor(e);
+      drawStrokeOverlay();
+    });
+
+    els.eraserCanvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'mouse' || drawing) updateCursor(e);
+      if (!drawing) return;
+      e.preventDefault();
+      const pos = getCanvasPos(e);
+      const last = dispPoints[dispPoints.length - 1];
+      if (!last || Math.hypot(pos.cx - last.cx, pos.cy - last.cy) >= 2) {
+        dispPoints.push(pos);
+        drawStrokeOverlay();
+      }
+    });
+
+    const finishErase = (e) => {
+      if (!drawing) return;
+      drawing = false;
+      try {
+        if (e && els.eraserCanvas.hasPointerCapture(e.pointerId)) {
+          els.eraserCanvas.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+
+      const ctx = els.eraserCanvas.getContext('2d');
+      ctx.clearRect(0, 0, els.eraserCanvas.width, els.eraserCanvas.height);
+
+      if (dispPoints.length === 0 || !sourceImage) return;
+
+      const srcPoints = dispPoints.map((pt) => displayToSourceNorm(pt.u, pt.v, state.transform));
+      const crop = state.transform.crop || { x: 0, y: 0, w: 1, h: 1 };
+      const minDisp = Math.min(els.eraserCanvas.width, els.eraserCanvas.height) || 300;
+      const normRadius = ((eraserBrushPx * 0.5) / minDisp) * Math.min(crop.w, crop.h);
+
+      dispPoints = [];
+
+      // Run fast multi-scale content-aware inpainting at full image resolution
+      const healed = P.inpaintStroke(sourceImage, srcPoints, normRadius);
+      sourceImage = healed;
+      generatePresetThumbnails();
+      pushHistory();
+      scheduleRender();
+      showToast('Đã xóa vùng vừa tô! (Bấm Hoàn tác nếu muốn vẽ lại)');
+    };
+
+    els.eraserCanvas.addEventListener('pointerup', finishErase);
+    els.eraserCanvas.addEventListener('pointercancel', finishErase);
+
+    if (els.eraserSize) {
+      els.eraserSize.addEventListener('input', () => {
+        eraserBrushPx = parseInt(els.eraserSize.value, 10) || 22;
+        if (els.valEraserSize) els.valEraserSize.textContent = `${eraserBrushPx}px`;
+      });
+    }
+
+    if (els.eraserUndoBtn) {
+      els.eraserUndoBtn.addEventListener('click', () => undo());
+    }
+
+    if (els.aiQuickEraseJumpBtn) {
+      els.aiQuickEraseJumpBtn.addEventListener('click', () => {
+        setAiMode('erase');
+        showToast('Hãy tô ngón tay/chuột trực tiếp lên vật thể cần xóa');
+      });
+    }
   }
 
   function setAiBusy(busy) {
@@ -1957,8 +2174,13 @@
         setAiReply(res.message, 'ok');
         showToast('Gemini AI đã sửa ảnh xong');
       } catch (err) {
-        setAiReply(`Lỗi Gemini AI: ${err.message || err}`, 'error');
-        showToast('Không thể kết nối Gemini AI');
+        const isFreeLimit = Boolean(err && err.isFreeTierImageLimit);
+        setAiReply(
+          isFreeLimit ? err.message : `Lỗi Gemini AI: ${err.message || err}`,
+          'error',
+          isFreeLimit
+        );
+        showToast(isFreeLimit ? 'Dùng Cọ tẩy vật thể miễn phí để xóa ngay!' : 'Không thể kết nối Gemini AI');
       } finally {
         setAiBusy(false);
       }
@@ -2003,8 +2225,8 @@
     // Instant Built-in Vietnamese AI (Zero latency, free, no API key required!)
     const res = AI.runLocalSmartAI(prompt, state, sourceImage, P);
     if (res.needsGeminiImage) {
-      setAiReply(res.message, 'error');
-      openAiConfigModal();
+      setAiReply(res.message, 'error', true);
+      showToast('Bạn có thể dùng ngay 🪄 Tẩy vật thể miễn phí!');
       return;
     }
     if (res.changed) {
@@ -2101,6 +2323,8 @@
         executeAiPrompt(val, false);
       });
     }
+
+    initMagicEraser();
   }
 
   // --- Init ---

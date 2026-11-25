@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
   <div class="app-shell">
@@ -127,6 +127,10 @@
               </div>
             </div>
 
+            <!-- Interactive Magic Eraser Brush Overlay -->
+            <canvas id="eraserCanvas" class="eraser-overlay hidden"></canvas>
+            <div id="brushCursor" class="brush-cursor hidden" aria-hidden="true"></div>
+
             <!-- Interactive Crop Overlay -->
             <div class="crop-overlay hidden" id="cropOverlay">
               <div class="crop-box" id="cropBox">
@@ -216,8 +220,9 @@
             <div class="ai-dock">
               <div class="ai-top-bar">
                 <div class="segmented-control" id="aiModeTabs">
-                  <button type="button" class="seg-btn active" data-aimode="color">Chỉnh màu AI</button>
-                  <button type="button" class="seg-btn" data-aimode="generative">Biến đổi ảnh AI</button>
+                  <button type="button" class="seg-btn active" data-aimode="color">Chỉnh màu</button>
+                  <button type="button" class="seg-btn" data-aimode="erase">🪄 Tẩy vật thể</button>
+                  <button type="button" class="seg-btn" data-aimode="generative">Biến đổi AI</button>
                 </div>
                 <button type="button" class="btn btn-ai-key" id="aiConfigBtn" title="Cài đặt Gemini API Key để dùng AI nâng cao">
                   <span class="ai-key-dot" id="aiKeyDot"></span>
@@ -225,38 +230,64 @@
                 </button>
               </div>
 
-              <div class="ai-reply-box" id="aiReplyBox">
-                <span class="ai-reply-icon" aria-hidden="true">✨</span>
-                <span class="ai-reply-text" id="aiReplyText">Nhập yêu cầu bằng tiếng Việt (VD: "làm sáng da kiểu Hàn Quốc", "màu Leica cổ điển", "cứu ảnh tối") hoặc chọn gợi ý nhanh bên dưới.</span>
+              <!-- Sub-view A: Prompt Chat (Chỉnh màu AI & Biến đổi AI) -->
+              <div class="ai-subview" id="aiChatView">
+                <div class="ai-reply-box" id="aiReplyBox">
+                  <span class="ai-reply-icon" aria-hidden="true">✨</span>
+                  <div class="ai-reply-body">
+                    <span class="ai-reply-text" id="aiReplyText">Nhập yêu cầu bằng tiếng Việt (VD: "làm sáng da kiểu Hàn Quốc", "màu Leica cổ điển", "xóa phông") hoặc dùng 🪄 Tẩy vật thể miễn phí.</span>
+                    <button type="button" class="btn-inline-erase hidden" id="aiQuickEraseJumpBtn">🪄 Mở Cọ tẩy vật thể miễn phí →</button>
+                  </div>
+                </div>
+
+                <div class="ai-chips" id="aiQuickChips">
+                  <button type="button" class="ai-chip" data-prompt="Đẹp tự nhiên, cân bằng sáng và màu chuẩn">✨ Đẹp tự nhiên</button>
+                  <button type="button" class="ai-chip" data-prompt="Xóa phông làm mờ nền nhẹ và tôn da sáng hồng">🫧 Xóa phông nền</button>
+                  <button type="button" class="ai-chip" data-prompt="Chỉnh màu Hàn Quốc trong trẻo, trắng hồng da nhẹ nhàng">🌸 Trắng hồng Hàn Quốc</button>
+                  <button type="button" class="ai-chip" data-prompt="Chỉnh màu Leica Chrome tương phản sâu, ấm nhẹ">🎞️ Leica Chrome</button>
+                  <button type="button" class="ai-chip" data-prompt="Cứu ảnh ngược sáng bị tối, nâng vùng tối và làm sắc nét">☁️ Cứu ảnh tối</button>
+                  <button type="button" class="ai-chip" data-prompt="Làm bầu trời xanh sâu hơn và lá cây xanh tươi sống động">🌊 Trời xanh cây tươi</button>
+                  <button type="button" class="ai-chip" data-prompt="Tông nắng vàng ấm áp, ánh sáng mơ màng">🌅 Nắng vàng mơ màng</button>
+                  <button type="button" class="ai-chip" data-prompt="Chỉnh đen trắng nghệ thuật Leica Monochrom tương phản sâu">🖤 Đen trắng Leica</button>
+                  <button type="button" class="ai-chip" data-prompt="Cắt vuông 1:1 và thêm khung Polaroid">🖼️ Vuông + Polaroid</button>
+                  <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Xóa các vật thể thừa gây rối ở hậu cảnh, giữ chủ thể tự nhiên">🪄 Xóa vật thừa (Gemini)</button>
+                </div>
+
+                <form class="ai-input-row" id="aiPromptForm">
+                  <input
+                    type="text"
+                    id="aiPromptInput"
+                    class="ai-text-input"
+                    placeholder="Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, màu film ấm)"
+                    autocomplete="off"
+                  />
+                  <button type="submit" class="btn btn-primary btn-ai-send" id="aiSendBtn">
+                    <span class="ai-send-label">Sửa ảnh</span>
+                    <span class="ai-spinner hidden" id="aiSpinner" aria-hidden="true"></span>
+                  </button>
+                </form>
               </div>
 
-              <div class="ai-chips" id="aiQuickChips">
-                <button type="button" class="ai-chip" data-prompt="Đẹp tự nhiên, cân bằng sáng và màu chuẩn">✨ Đẹp tự nhiên</button>
-                <button type="button" class="ai-chip" data-prompt="Xóa phông làm mờ nền nhẹ và tôn da sáng hồng">🫧 Xóa phông nền</button>
-                <button type="button" class="ai-chip" data-prompt="Chỉnh màu Hàn Quốc trong trẻo, trắng hồng da nhẹ nhàng">🌸 Trắng hồng Hàn Quốc</button>
-                <button type="button" class="ai-chip" data-prompt="Chỉnh màu Leica Chrome tương phản sâu, ấm nhẹ">🎞️ Leica Chrome</button>
-                <button type="button" class="ai-chip" data-prompt="Cứu ảnh ngược sáng bị tối, nâng vùng tối và làm sắc nét">☁️ Cứu ảnh tối</button>
-                <button type="button" class="ai-chip" data-prompt="Làm bầu trời xanh sâu hơn và lá cây xanh tươi sống động">🌊 Trời xanh cây tươi</button>
-                <button type="button" class="ai-chip" data-prompt="Tông nắng vàng ấm áp, ánh sáng mơ màng">🌅 Nắng vàng mơ màng</button>
-                <button type="button" class="ai-chip" data-prompt="Chỉnh đen trắng nghệ thuật Leica Monochrom tương phản sâu">🖤 Đen trắng Leica</button>
-                <button type="button" class="ai-chip" data-prompt="Cắt vuông 1:1 và thêm khung Polaroid">🖼️ Vuông + Polaroid</button>
-                <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Xóa các vật thể thừa gây rối ở hậu cảnh, giữ chủ thể tự nhiên">🪄 Xóa vật thừa</button>
-                <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Thêm ánh nắng hoàng hôn dịu nhẹ chiếu xuyên qua khung cảnh">☀️ Thêm nắng chiều</button>
+              <!-- Sub-view B: Free Local Magic Eraser Brush (Tẩy vật thể trực tiếp) -->
+              <div class="ai-subview hidden" id="aiEraseView">
+                <div class="ai-reply-box">
+                  <span class="ai-reply-icon" aria-hidden="true">🪄</span>
+                  <span class="ai-reply-text" id="eraserHintText">Tô ngón tay hoặc chuột trực tiếp lên dây chuyền, mụn, dây điện trên ảnh — nhấc tay ra để xóa tức thì (miễn phí 100%).</span>
+                </div>
+                <div class="eraser-controls-box">
+                  <div class="slider-row">
+                    <div class="slider-label-row">
+                      <label for="eraserSize">Cỡ đầu cọ</label>
+                      <span class="slider-val mono" id="val-eraserSize">22px</span>
+                    </div>
+                    <input type="range" id="eraserSize" min="6" max="72" step="1" value="22" />
+                  </div>
+                  <div class="eraser-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" id="eraserUndoBtn">Hoàn tác nét</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="eraserZoomHintBtn">Mẹo: Phóng to (+) để tô chi tiết nhỏ</button>
+                  </div>
+                </div>
               </div>
-
-              <form class="ai-input-row" id="aiPromptForm">
-                <input
-                  type="text"
-                  id="aiPromptInput"
-                  class="ai-text-input"
-                  placeholder="Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, màu film ấm)"
-                  autocomplete="off"
-                />
-                <button type="submit" class="btn btn-primary btn-ai-send" id="aiSendBtn">
-                  <span class="ai-send-label">Sửa ảnh</span>
-                  <span class="ai-spinner hidden" id="aiSpinner" aria-hidden="true"></span>
-                </button>
-              </form>
             </div>
           </div>
 
@@ -577,8 +608,8 @@
   <!-- Toast notification -->
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="processor.js?v=5"></script>
-  <script src="ai-assistant.js?v=5"></script>
-  <script src="app.js?v=5"></script>
+  <script src="processor.js?v=6"></script>
+  <script src="ai-assistant.js?v=6"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
