@@ -185,8 +185,12 @@
           <canvas id="histogramCanvas" width="280" height="72"></canvas>
         </div>
 
-        <!-- Panel Tabs (Top of panel on Desktop, Pinned Bottom Nav on Mobile) -->
+        <!-- Panel Tabs (Pinned Bottom Nav on both PC & Mobile) -->
         <nav class="panel-tabs" role="tablist">
+          <button class="tab-btn tab-btn-ai" role="tab" data-tab="ai" aria-selected="false">
+            <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6L12 2z"/><path d="M5 19l1 3 1-3 3-1-3-1-1-3-1 3-3 1 3 1z"/></svg>
+            <span>AI</span>
+          </button>
           <button class="tab-btn active" role="tab" data-tab="presets" aria-selected="true">
             <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18"/><path d="M12 3v18"/><path d="M12 8l6.5-2"/><path d="M12 12l8 0"/><path d="M12 16l6.5 2"/></svg>
             <span>Bộ lọc</span>
@@ -197,7 +201,7 @@
           </button>
           <button class="tab-btn" role="tab" data-tab="crop" aria-selected="false">
             <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></svg>
-            <span>Cắt & Xoay</span>
+            <span>Cắt</span>
           </button>
           <button class="tab-btn" role="tab" data-tab="frame" aria-selected="false">
             <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="7" y="7" width="10" height="8" rx="1"/></svg>
@@ -207,6 +211,54 @@
 
         <!-- Tab Panels -->
         <div class="panel-body">
+          <!-- TAB 0: Lumina AI Assistant -->
+          <div class="tab-pane" id="tab-ai">
+            <div class="ai-dock">
+              <div class="ai-top-bar">
+                <div class="segmented-control" id="aiModeTabs">
+                  <button type="button" class="seg-btn active" data-aimode="color">Chỉnh màu AI</button>
+                  <button type="button" class="seg-btn" data-aimode="generative">Biến đổi ảnh AI</button>
+                </div>
+                <button type="button" class="btn btn-ai-key" id="aiConfigBtn" title="Cài đặt Gemini API Key để dùng AI nâng cao">
+                  <span class="ai-key-dot" id="aiKeyDot"></span>
+                  <span id="aiKeyLabel">Gemini API</span>
+                </button>
+              </div>
+
+              <div class="ai-reply-box" id="aiReplyBox">
+                <span class="ai-reply-icon" aria-hidden="true">✨</span>
+                <span class="ai-reply-text" id="aiReplyText">Nhập yêu cầu bằng tiếng Việt (VD: "làm sáng da kiểu Hàn Quốc", "màu Leica cổ điển", "cứu ảnh tối") hoặc chọn gợi ý nhanh bên dưới.</span>
+              </div>
+
+              <div class="ai-chips" id="aiQuickChips">
+                <button type="button" class="ai-chip" data-prompt="Đẹp tự nhiên, cân bằng sáng và màu chuẩn">✨ Đẹp tự nhiên</button>
+                <button type="button" class="ai-chip" data-prompt="Chỉnh màu Hàn Quốc trong trẻo, trắng hồng da nhẹ nhàng">🌸 Trắng hồng Hàn Quốc</button>
+                <button type="button" class="ai-chip" data-prompt="Chỉnh màu Leica Chrome tương phản sâu, ấm nhẹ">🎞️ Leica Chrome</button>
+                <button type="button" class="ai-chip" data-prompt="Cứu ảnh ngược sáng bị tối, nâng vùng tối và làm sắc nét">☁️ Cứu ảnh tối</button>
+                <button type="button" class="ai-chip" data-prompt="Làm bầu trời xanh sâu hơn và lá cây xanh tươi sống động">🌊 Trời xanh cây tươi</button>
+                <button type="button" class="ai-chip" data-prompt="Tông nắng vàng ấm áp, ánh sáng mơ màng">🌅 Nắng vàng mơ màng</button>
+                <button type="button" class="ai-chip" data-prompt="Chỉnh đen trắng nghệ thuật Leica Monochrom tương phản sâu">🖤 Đen trắng Leica</button>
+                <button type="button" class="ai-chip" data-prompt="Cắt vuông 1:1 và thêm khung Polaroid">🖼️ Vuông + Polaroid</button>
+                <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Xóa các vật thể thừa gây rối ở hậu cảnh, giữ chủ thể tự nhiên">🪄 Xóa vật thừa</button>
+                <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Thêm ánh nắng hoàng hôn dịu nhẹ chiếu xuyên qua khung cảnh">☀️ Thêm nắng chiều</button>
+              </div>
+
+              <form class="ai-input-row" id="aiPromptForm">
+                <input
+                  type="text"
+                  id="aiPromptInput"
+                  class="ai-text-input"
+                  placeholder="Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, màu film ấm)"
+                  autocomplete="off"
+                />
+                <button type="submit" class="btn btn-primary btn-ai-send" id="aiSendBtn">
+                  <span class="ai-send-label">Sửa ảnh</span>
+                  <span class="ai-spinner hidden" id="aiSpinner" aria-hidden="true"></span>
+                </button>
+              </form>
+            </div>
+          </div>
+
           <!-- TAB 1: Presets -->
           <div class="tab-pane active" id="tab-presets">
             <div class="panel-section">
@@ -489,10 +541,41 @@
     </div>
   </div>
 
+  <!-- Gemini AI API Key Settings Modal -->
+  <div class="modal-backdrop hidden" id="aiConfigModal" role="dialog" aria-modal="true" aria-labelledby="aiConfigTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="aiConfigTitle">Kết nối Gemini AI Nâng Cao</h2>
+        <button class="btn btn-icon btn-sm" id="aiConfigCloseBtn" type="button" aria-label="Đóng">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="ai-modal-desc">
+          Không cần API key bạn vẫn có thể dùng <strong>Chỉnh màu AI tức thì</strong> miễn phí. Nhập <strong>Gemini API Key</strong> để mở khóa thêm:
+        </p>
+        <ul class="ai-modal-list">
+          <li><strong>Chỉnh màu bằng thị giác</strong> (<code>gemini-4-hydrogen</code>): AI nhìn ảnh thật và cân chỉnh công thức màu + HSL chuẩn xác.</li>
+          <li><strong>Biến đổi ảnh tạo sinh</strong> (<code>gemini-nano-banana-2.1</code>): Xóa vật thừa, đổi phông nền, thêm ánh sáng, thay phong cách theo câu lệnh.</li>
+        </ul>
+        <div class="form-field">
+          <label for="aiApiKeyInput">Gemini API Key (lưu riêng trên trình duyệt của bạn)</label>
+          <input type="password" id="aiApiKeyInput" class="text-input mono" placeholder="AIza..." autocomplete="off" />
+        </div>
+        <p class="ai-modal-note">
+          Lấy khóa miễn phí tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. Khóa chỉ lưu trong trình duyệt của bạn và gọi trực tiếp tới Google Gemini API.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" type="button" id="aiKeyClearBtn">Xóa khóa</button>
+        <button class="btn btn-primary" type="button" id="aiKeySaveBtn">Lưu kết nối</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast notification -->
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
   <script src="processor.js"></script>
+  <script src="ai-assistant.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

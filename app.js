@@ -2,6 +2,7 @@
   'use strict';
 
   const P = window.LuminaProcessor;
+  const AI = window.LuminaAI;
   const PREVIEW_MAX_DIM = 1400;
   const MAX_HISTORY = 40;
 
@@ -116,6 +117,25 @@
     exportOutSize: document.getElementById('exportOutSize'),
 
     toast: document.getElementById('toast'),
+
+    // AI Assistant elements
+    aiModeTabs: document.getElementById('aiModeTabs'),
+    aiConfigBtn: document.getElementById('aiConfigBtn'),
+    aiKeyDot: document.getElementById('aiKeyDot'),
+    aiKeyLabel: document.getElementById('aiKeyLabel'),
+    aiReplyBox: document.getElementById('aiReplyBox'),
+    aiReplyText: document.getElementById('aiReplyText'),
+    aiQuickChips: document.getElementById('aiQuickChips'),
+    aiPromptForm: document.getElementById('aiPromptForm'),
+    aiPromptInput: document.getElementById('aiPromptInput'),
+    aiSendBtn: document.getElementById('aiSendBtn'),
+    aiSpinner: document.getElementById('aiSpinner'),
+
+    aiConfigModal: document.getElementById('aiConfigModal'),
+    aiConfigCloseBtn: document.getElementById('aiConfigCloseBtn'),
+    aiApiKeyInput: document.getElementById('aiApiKeyInput'),
+    aiKeyClearBtn: document.getElementById('aiKeyClearBtn'),
+    aiKeySaveBtn: document.getElementById('aiKeySaveBtn'),
   };
 
   // --- App State ---
@@ -145,11 +165,17 @@
     return JSON.parse(JSON.stringify(s));
   }
 
-  let sourceImage = null; // HTMLImageElement or HTMLCanvasElement
+  let sourceImage = null; // Current active HTMLImageElement or HTMLCanvasElement
+  let originalSourceImage = null; // Original uploaded image (preserved for Before/After & Reset)
   let imageFilename = 'lumina-photo';
   let state = createDefaultState();
   let history = [];
   let historyIndex = -1;
+
+  // AI transient state
+  let aiMode = 'color'; // 'color' | 'generative'
+  let aiBusy = false;
+  let aiPrevInteractionId = null;
 
   // View / UI transient state
   let activeTab = 'presets';
@@ -426,9 +452,9 @@
     return v < min ? min : v > max ? max : v;
   }
 
-  // --- History ---
+  // --- History (supports both parameter edits and Gemini generative image edits!) ---
   function pushHistory() {
-    const snap = cloneState(state);
+    const snap = { state: cloneState(state), source: sourceImage };
     if (historyIndex < history.length - 1) {
       history = history.slice(0, historyIndex + 1);
     }
@@ -445,25 +471,30 @@
     els.redoBtn.disabled = !sourceImage || historyIndex >= history.length - 1;
   }
 
-  function undo() {
-    if (historyIndex <= 0) return;
-    historyIndex--;
-    state = cloneState(history[historyIndex]);
+  function applyHistoryEntry(entry) {
+    const prevSource = sourceImage;
+    state = cloneState(entry.state);
+    sourceImage = entry.source || originalSourceImage;
     cropDraft = Object.assign({}, state.transform.crop);
+    if (sourceImage !== prevSource) {
+      generatePresetThumbnails();
+    }
     syncControlsFromState();
     scheduleRender();
     updateHistoryButtons();
+  }
+
+  function undo() {
+    if (historyIndex <= 0) return;
+    historyIndex--;
+    applyHistoryEntry(history[historyIndex]);
     showToast('Đã hoàn tác');
   }
 
   function redo() {
     if (historyIndex >= history.length - 1) return;
     historyIndex++;
-    state = cloneState(history[historyIndex]);
-    cropDraft = Object.assign({}, state.transform.crop);
-    syncControlsFromState();
-    scheduleRender();
-    updateHistoryButtons();
+    applyHistoryEntry(history[historyIndex]);
     showToast('Đã làm lại');
   }
 
@@ -895,6 +926,8 @@
   // --- Image Loading ---
   function loadSource(imgOrCanvas, name) {
     sourceImage = imgOrCanvas;
+    originalSourceImage = imgOrCanvas;
+    aiPrevInteractionId = null;
     imageFilename = (name || 'lumina-photo').replace(/\.[^.]+$/, '');
     state = createDefaultState();
     cropDraft = { x: 0, y: 0, w: 1, h: 1 };
@@ -998,8 +1031,18 @@
       includeFrame: !inCropMode,
     });
 
-    const outCanvas = holdingOriginal && result.originalCanvas
-      ? result.originalCanvas
+    // If sourceImage was replaced by Gemini Generative AI, compare against true originalSourceImage!
+    let origCanvasForCompare = result.originalCanvas;
+    if (needOrig && originalSourceImage && sourceImage !== originalSourceImage) {
+      const origBase = document.createElement('canvas');
+      origBase.width = result.processedCanvas.width;
+      origBase.height = result.processedCanvas.height;
+      origBase.getContext('2d').drawImage(originalSourceImage, 0, 0, origBase.width, origBase.height);
+      origCanvasForCompare = origBase;
+    }
+
+    const outCanvas = holdingOriginal && origCanvasForCompare
+      ? origCanvasForCompare
       : result.processedCanvas;
 
     const pCanvas = els.previewCanvas;
@@ -1007,11 +1050,11 @@
     pCanvas.height = outCanvas.height;
     pCanvas.getContext('2d').drawImage(outCanvas, 0, 0);
 
-    if (needOrig && result.originalCanvas) {
+    if (needOrig && origCanvasForCompare) {
       const oCanvas = els.originalCanvas;
-      oCanvas.width = result.originalCanvas.width;
-      oCanvas.height = result.originalCanvas.height;
-      oCanvas.getContext('2d').drawImage(result.originalCanvas, 0, 0);
+      oCanvas.width = origCanvasForCompare.width;
+      oCanvas.height = origCanvasForCompare.height;
+      oCanvas.getContext('2d').drawImage(origCanvasForCompare, 0, 0);
     }
 
     // Fit canvas inside viewport
@@ -1588,8 +1631,12 @@
     // Reset All (Desktop + Mobile quick bar)
     const resetAllEdits = () => {
       if (!sourceImage) return;
+      const hadAiSrc = sourceImage !== originalSourceImage;
+      sourceImage = originalSourceImage || sourceImage;
+      aiPrevInteractionId = null;
       state = createDefaultState();
       cropDraft = { x: 0, y: 0, w: 1, h: 1 };
+      if (hadAiSrc) generatePresetThumbnails();
       syncControlsFromState();
       pushHistory();
       scheduleRender();
@@ -1761,6 +1808,8 @@
         els.fileInput.click();
       } else if (e.key === 'Escape' && !els.exportModal.classList.contains('hidden')) {
         closeExportModal();
+      } else if (e.key === 'Escape' && els.aiConfigModal && !els.aiConfigModal.classList.contains('hidden')) {
+        els.aiConfigModal.classList.add('hidden');
       } else if (!inInput && e.key === '\\' && sourceImage && !holdingOriginal) {
         holdingOriginal = true;
         els.holdCompareBtn.classList.add('active');
@@ -1792,7 +1841,7 @@
     }
 
     // Enable smooth mouse-wheel horizontal scrolling on horizontal strips for desktop users
-    document.querySelectorAll('.preset-grid, .mobile-tool-strip, .aspect-pills, .preset-cat-pills').forEach((strip) => {
+    document.querySelectorAll('.preset-grid, .mobile-tool-strip, .aspect-pills, .preset-cat-pills, .ai-chips').forEach((strip) => {
       strip.addEventListener('wheel', (e) => {
         if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && strip.scrollWidth > strip.clientWidth) {
           e.preventDefault();
@@ -1800,6 +1849,234 @@
         }
       }, { passive: false });
     });
+
+    bindAiEvents();
+  }
+
+  // --- Lumina AI Photo Assistant UI Controller ---
+  function updateAiKeyBadge() {
+    if (!AI || !els.aiConfigBtn) return;
+    const hasKey = Boolean(AI.getApiKey());
+    els.aiConfigBtn.classList.toggle('connected', hasKey);
+    if (els.aiKeyLabel) {
+      els.aiKeyLabel.textContent = hasKey ? 'Gemini đã kết nối' : 'Gemini API';
+    }
+  }
+
+  function setAiMode(mode) {
+    aiMode = mode === 'generative' ? 'generative' : 'color';
+    if (els.aiModeTabs) {
+      els.aiModeTabs.querySelectorAll('.seg-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.aimode === aiMode);
+      });
+    }
+    if (els.aiPromptInput) {
+      els.aiPromptInput.placeholder = aiMode === 'generative'
+        ? 'Mô tả biến đổi ảnh (VD: xóa người nền sau, đổi nền biển hoàng hôn...)'
+        : 'Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, trắng hồng da, màu Leica)';
+    }
+  }
+
+  function setAiReply(msg, kind) {
+    if (!els.aiReplyBox || !els.aiReplyText) return;
+    els.aiReplyBox.classList.toggle('is-error', kind === 'error');
+    els.aiReplyBox.classList.toggle('is-loading', kind === 'loading');
+    els.aiReplyText.textContent = msg;
+  }
+
+  function setAiBusy(busy) {
+    aiBusy = busy;
+    if (els.aiSendBtn) els.aiSendBtn.disabled = busy;
+    if (els.aiPromptInput) els.aiPromptInput.disabled = busy;
+    if (els.aiSpinner) els.aiSpinner.classList.toggle('hidden', !busy);
+    const lbl = els.aiSendBtn && els.aiSendBtn.querySelector('.ai-send-label');
+    if (lbl) lbl.textContent = busy ? 'Đang xử lý...' : 'Sửa ảnh';
+  }
+
+  function openAiConfigModal() {
+    if (!els.aiConfigModal) return;
+    els.aiApiKeyInput.value = AI.getApiKey();
+    els.aiConfigModal.classList.remove('hidden');
+  }
+
+  function closeAiConfigModal() {
+    if (!els.aiConfigModal) return;
+    els.aiConfigModal.classList.add('hidden');
+  }
+
+  async function executeAiPrompt(promptText, forceGenerative) {
+    const prompt = (promptText || '').trim();
+    if (!prompt || aiBusy) return;
+    if (!sourceImage) {
+      showToast('Hãy mở ảnh hoặc chọn Ảnh mẫu trước khi dùng AI');
+      return;
+    }
+
+    const apiKey = AI.getApiKey();
+    const useGenerative = forceGenerative || aiMode === 'generative';
+
+    // Generative pixel editing mode (Gemini Nano Banana 2.1)
+    if (useGenerative) {
+      if (!apiKey) {
+        setAiReply('Để xóa vật thể hoặc đổi phông nền, hãy nhập Gemini API Key miễn phí (bấm nút "Gemini API" ở góc phải).', 'error');
+        openAiConfigModal();
+        return;
+      }
+
+      setAiBusy(true);
+      setAiReply('Gemini AI (Nano Banana 2.1) đang biến đổi bức ảnh theo yêu cầu của bạn...', 'loading');
+      try {
+        const rendered = P.renderPipeline(sourceImage, state, {
+          maxDim: 1280,
+          needOriginal: false,
+          includeFrame: false,
+        }).processedCanvas;
+
+        const res = await AI.runGeminiImageEdit(prompt, rendered, apiKey, aiPrevInteractionId);
+        aiPrevInteractionId = res.interactionId || aiPrevInteractionId;
+
+        // Apply returned AI image as new working source while preserving originalSourceImage for Compare/Reset!
+        sourceImage = res.image;
+        const keepFrame = cloneState(state.frame);
+        state = createDefaultState();
+        state.frame = keepFrame;
+        cropDraft = { x: 0, y: 0, w: 1, h: 1 };
+
+        generatePresetThumbnails();
+        syncControlsFromState();
+        pushHistory();
+        scheduleRender();
+        setAiReply(res.message, 'ok');
+        showToast('Gemini AI đã sửa ảnh xong');
+      } catch (err) {
+        setAiReply(`Lỗi Gemini AI: ${err.message || err}`, 'error');
+        showToast('Không thể kết nối Gemini AI');
+      } finally {
+        setAiBusy(false);
+      }
+      return;
+    }
+
+    // Color & Smart Grading AI Mode
+    // If Gemini API Key is connected, use Gemini 4 Hydrogen visual grading; otherwise instant built-in Vietnamese AI!
+    if (apiKey && !AI.looksLikeGenerativeEdit(prompt)) {
+      setAiBusy(true);
+      setAiReply('Gemini AI đang quan sát ảnh và cân chỉnh màu sắc theo yêu cầu...', 'loading');
+      try {
+        const rendered = P.renderPipeline(sourceImage, state, {
+          maxDim: 768,
+          needOriginal: false,
+          includeFrame: false,
+        }).processedCanvas;
+
+        const res = await AI.runGeminiColorAI(prompt, state, rendered, P, apiKey);
+        state = res.state;
+        syncControlsFromState();
+        pushHistory();
+        scheduleRender();
+        setAiReply(res.message, 'ok');
+        showToast('Gemini AI đã chỉnh màu xong');
+        setAiBusy(false);
+        return;
+      } catch (err) {
+        // Gracefully fall back to built-in instant AI so user is never stuck!
+        const fallback = AI.runLocalSmartAI(prompt, state, sourceImage, P);
+        if (fallback.changed) {
+          state = fallback.state;
+          syncControlsFromState();
+          pushHistory();
+          scheduleRender();
+        }
+        setAiReply(`(Chuyển về AI tức thì do lỗi Gemini: ${err.message}) — ${fallback.message}`, 'error');
+        setAiBusy(false);
+        return;
+      }
+    }
+
+    // Instant Built-in Vietnamese AI (Zero latency, free, no API key required!)
+    const res = AI.runLocalSmartAI(prompt, state, sourceImage, P);
+    if (res.needsGeminiImage) {
+      setAiReply(res.message, 'error');
+      showToast('Mở cài đặt Gemini API để dùng biến đổi ảnh tạo sinh');
+      return;
+    }
+    if (res.changed) {
+      if (res.resetSource && originalSourceImage) {
+        sourceImage = originalSourceImage;
+        aiPrevInteractionId = null;
+        generatePresetThumbnails();
+      }
+      state = res.state;
+      cropDraft = Object.assign({}, state.transform.crop);
+      syncControlsFromState();
+      pushHistory();
+      scheduleRender();
+      setAiReply(res.message, 'ok');
+      showToast('AI đã chỉnh ảnh theo yêu cầu');
+    } else {
+      setAiReply(res.message, 'ok');
+    }
+  }
+
+  function bindAiEvents() {
+    if (!AI) return;
+    updateAiKeyBadge();
+
+    if (els.aiModeTabs) {
+      els.aiModeTabs.querySelectorAll('.seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => setAiMode(btn.dataset.aimode));
+      });
+    }
+
+    if (els.aiConfigBtn) {
+      els.aiConfigBtn.addEventListener('click', openAiConfigModal);
+    }
+    if (els.aiConfigCloseBtn) {
+      els.aiConfigCloseBtn.addEventListener('click', closeAiConfigModal);
+    }
+    if (els.aiConfigModal) {
+      els.aiConfigModal.addEventListener('click', (e) => {
+        if (e.target === els.aiConfigModal) closeAiConfigModal();
+      });
+    }
+    if (els.aiKeySaveBtn) {
+      els.aiKeySaveBtn.addEventListener('click', () => {
+        AI.setApiKey(els.aiApiKeyInput.value);
+        updateAiKeyBadge();
+        closeAiConfigModal();
+        const hasKey = Boolean(AI.getApiKey());
+        showToast(hasKey ? 'Đã kết nối Gemini AI thành công!' : 'Đã chuyển sang chế độ AI tức thì miễn phí');
+      });
+    }
+    if (els.aiKeyClearBtn) {
+      els.aiKeyClearBtn.addEventListener('click', () => {
+        AI.setApiKey('');
+        els.aiApiKeyInput.value = '';
+        updateAiKeyBadge();
+        closeAiConfigModal();
+        showToast('Đã xóa Gemini API Key');
+      });
+    }
+
+    if (els.aiQuickChips) {
+      els.aiQuickChips.querySelectorAll('.ai-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          const prompt = chip.dataset.prompt || '';
+          const isGen = chip.dataset.gen === 'true';
+          setAiMode(isGen ? 'generative' : 'color');
+          if (els.aiPromptInput) els.aiPromptInput.value = prompt;
+          executeAiPrompt(prompt, isGen);
+        });
+      });
+    }
+
+    if (els.aiPromptForm) {
+      els.aiPromptForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const val = els.aiPromptInput.value;
+        executeAiPrompt(val, false);
+      });
+    }
   }
 
   // --- Init ---
