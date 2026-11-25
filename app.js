@@ -198,6 +198,213 @@
     return all.find((c) => c.key === key) || all[0];
   }
 
+  // --- Pro Precision Finger-Tracking Slider Controller ---
+  const proSliderMap = new Map();
+
+  function getBubbleTextForSlider(input, val) {
+    const id = input.id;
+    if (id === 'mobileAdjRange') return formatSliderValue(activeMobileTool, val);
+    if (id === 'presetStrength' || id === 'frameSize' || id === 'exportQuality') return `${val}%`;
+    if (id === 'straighten') return `${val}°`;
+    if (id === 'hslHue' || id === 'hslSat' || id === 'hslLum') return val > 0 ? `+${val}` : String(val);
+    if (id.startsWith('adj-')) return formatSliderValue(id.slice(4), val);
+    return String(val);
+  }
+
+  function getDefaultResetForSlider(input) {
+    const id = input.id;
+    if (id === 'presetStrength') return 100;
+    if (id === 'frameSize') return 6;
+    if (id === 'exportQuality') return 92;
+    return 0;
+  }
+
+  function syncProSlider(input) {
+    const ui = proSliderMap.get(input);
+    if (!ui) return;
+
+    const min = parseFloat(input.min);
+    const max = parseFloat(input.max);
+    const val = parseFloat(input.value);
+    const span = max - min || 1;
+    const pct = clamp(((val - min) / span) * 100, 0, 100);
+    const isBipolar = min < 0 && max > 0;
+
+    // Sync colored track mode (temperature, tint, hue)
+    const trackType = input.dataset.track || (input.classList.contains('range-hue') ? 'hue' : '');
+    if (trackType) ui.wrap.dataset.track = trackType;
+    else delete ui.wrap.dataset.track;
+
+    ui.zero.style.display = isBipolar ? 'block' : 'none';
+    if (isBipolar) {
+      const zeroPct = ((0 - min) / span) * 100;
+      ui.zero.style.left = `${zeroPct}%`;
+      const left = Math.min(zeroPct, pct);
+      const width = Math.abs(pct - zeroPct);
+      ui.fill.style.left = `${left}%`;
+      ui.fill.style.width = `${width}%`;
+    } else {
+      ui.fill.style.left = '0%';
+      ui.fill.style.width = `${pct}%`;
+    }
+
+    ui.thumb.style.left = `${pct}%`;
+    ui.bubble.textContent = getBubbleTextForSlider(input, val);
+
+    // Keep floating bubble inside viewport edges near 0% or 100%
+    if (pct < 12) {
+      ui.bubble.style.left = '100%';
+    } else if (pct > 88) {
+      ui.bubble.style.left = '0%';
+    } else {
+      ui.bubble.style.left = '50%';
+    }
+  }
+
+  function syncAllProSliders() {
+    proSliderMap.forEach((_, input) => syncProSlider(input));
+  }
+
+  function enhanceRangeSlider(input) {
+    if (!input || proSliderMap.has(input)) return;
+    const parent = input.parentNode;
+    if (!parent) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pro-slider';
+
+    const track = document.createElement('div');
+    track.className = 'pro-slider-track';
+
+    const ticks = document.createElement('div');
+    ticks.className = 'pro-slider-ticks';
+    const zero = document.createElement('div');
+    zero.className = 'pro-slider-zero';
+    const fill = document.createElement('div');
+    fill.className = 'pro-slider-fill';
+
+    track.appendChild(ticks);
+    track.appendChild(zero);
+    track.appendChild(fill);
+
+    const thumb = document.createElement('div');
+    thumb.className = 'pro-slider-thumb';
+    const bubble = document.createElement('div');
+    bubble.className = 'pro-slider-bubble';
+    thumb.appendChild(bubble);
+
+    parent.insertBefore(wrap, input);
+    wrap.appendChild(track);
+    wrap.appendChild(thumb);
+    input.classList.add('pro-slider-native');
+    wrap.appendChild(input);
+
+    proSliderMap.set(input, { wrap, track, zero, fill, thumb, bubble });
+
+    let dragging = false;
+    let moved = false;
+    let startVal = parseFloat(input.value);
+    let lastTapTime = 0;
+
+    const quantize = (raw, min, max, step) => {
+      const steps = Math.round((raw - min) / step);
+      const snapped = min + steps * step;
+      // Avoid float noise like 0.30000000000000004
+      const decimals = (String(step).split('.')[1] || '').length;
+      return clamp(Number(snapped.toFixed(decimals)), min, max);
+    };
+
+    const updateFromClientX = (clientX) => {
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const min = parseFloat(input.min);
+      const max = parseFloat(input.max);
+      const step = parseFloat(input.step) || 1;
+      const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+
+      let nextVal = quantize(min + ratio * (max - min), min, max, step);
+      // Gentle magnetic feel right on exact center 0
+      if (min < 0 && max > 0) {
+        const zeroRatio = (0 - min) / (max - min);
+        if (Math.abs(ratio - zeroRatio) < 0.007) {
+          nextVal = 0;
+        }
+      }
+
+      if (parseFloat(input.value) !== nextVal) {
+        input.value = String(nextVal);
+        syncProSlider(input);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        syncProSlider(input);
+      }
+    };
+
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const now = Date.now();
+      if (now - lastTapTime < 280) {
+        // Double-tap resets cleanly to default
+        lastTapTime = 0;
+        const resetVal = getDefaultResetForSlider(input);
+        if (parseFloat(input.value) !== resetVal) {
+          input.value = String(resetVal);
+          syncProSlider(input);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+      }
+      lastTapTime = now;
+
+      dragging = true;
+      moved = false;
+      startVal = parseFloat(input.value);
+      wrap.classList.add('dragging');
+      try {
+        wrap.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      updateFromClientX(e.clientX);
+    });
+
+    wrap.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      moved = true;
+      updateFromClientX(e.clientX);
+    });
+
+    const finishDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      wrap.classList.remove('dragging');
+      try {
+        if (e && wrap.hasPointerCapture(e.pointerId)) {
+          wrap.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      if (parseFloat(input.value) !== startVal || moved) {
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    };
+
+    wrap.addEventListener('pointerup', finishDrag);
+    wrap.addEventListener('pointercancel', finishDrag);
+
+    // Keep synced if changed via keyboard or programmatically
+    input.addEventListener('input', () => syncProSlider(input));
+    syncProSlider(input);
+  }
+
+  function initAllProSliders() {
+    document.querySelectorAll('input[type="range"]').forEach((input) => {
+      enhanceRangeSlider(input);
+    });
+  }
+
   // --- Utilities ---
   function showToast(msg) {
     els.toast.textContent = msg;
@@ -415,6 +622,7 @@
     els.mobileAdjRange.value = String(cur);
     els.mobileAdjRange.dataset.track = (key === 'temperature' || key === 'tint') ? key : '';
     els.mobileAdjVal.textContent = formatSliderValue(key, cur);
+    syncProSlider(els.mobileAdjRange);
 
     els.mobileToolStrip.querySelectorAll('.mobile-tool-btn').forEach((b) => {
       b.classList.toggle('active', b.dataset.toolKey === key);
@@ -517,6 +725,9 @@
     els.valHslHue.textContent = cur.h > 0 ? `+${cur.h}` : String(cur.h || 0);
     els.valHslSat.textContent = cur.s > 0 ? `+${cur.s}` : String(cur.s || 0);
     els.valHslLum.textContent = cur.l > 0 ? `+${cur.l}` : String(cur.l || 0);
+    syncProSlider(els.hslHue);
+    syncProSlider(els.hslSat);
+    syncProSlider(els.hslLum);
 
     els.hslSwatches.querySelectorAll('.hsl-swatch-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.hslId === activeHslChannel);
@@ -671,10 +882,11 @@
       p.classList.toggle('active', p.dataset.frame === state.frame.style);
     });
 
-    // Sync mobile single-slider dock & HSL mixer
+    // Sync mobile single-slider dock, HSL mixer & visual precision sliders
     selectMobileTool(activeMobileTool);
     updateMobileToolDots();
     syncHslControls();
+    syncAllProSliders();
   }
 
   // --- Image Loading ---
@@ -1073,6 +1285,7 @@
       state.transform.straighten = 0;
       els.straighten.value = '0';
       els.valStraighten.textContent = '0°';
+      syncProSlider(els.straighten);
       els.aspectPills.querySelectorAll('.pill').forEach((p) => {
         p.classList.toggle('active', p.dataset.aspect === 'free');
       });
@@ -1473,6 +1686,7 @@
       state.transform.straighten = 0;
       els.straighten.value = '0';
       els.valStraighten.textContent = '0°';
+      syncProSlider(els.straighten);
       pushHistory();
       scheduleRender();
     });
@@ -1589,6 +1803,7 @@
   buildAdjustmentSliders();
   buildHslMixer();
   buildPresetCards();
+  initAllProSliders();
   initSplitHandle();
   initCropInteractions();
   initPanZoom();

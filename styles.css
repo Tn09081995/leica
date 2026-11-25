@@ -1049,11 +1049,11 @@ body.has-image:not([data-theme="dark"]) .inspector {
 .mobile-active-slider-box {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 10px 15px 12px;
+  border-radius: 14px;
+  padding: 10px 15px 6px;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 2px;
 }
 
 .mobile-slider-head {
@@ -1225,11 +1225,11 @@ body.has-image:not([data-theme="dark"]) .inspector {
 .slider-row {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 2px;
 }
 
 .slider-row.compact {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .slider-label-row {
@@ -1256,7 +1256,170 @@ body.has-image:not([data-theme="dark"]) .inspector {
   text-align: right;
 }
 
-input[type="range"] {
+/* =========================================================
+   PRO PRECISION FINGER-TRACKING SLIDER
+   ========================================================= */
+.pro-slider {
+  position: relative;
+  width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pro-slider-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.pro-slider-track {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--slider-track);
+  overflow: visible;
+  transition: height 0.14s ease;
+}
+
+.pro-slider.dragging .pro-slider-track {
+  height: 8px;
+}
+
+/* Subtle precision ruler ticks along the slider */
+.pro-slider-ticks {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0.45;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(10% - 1px),
+    rgba(128, 150, 138, 0.42) calc(10% - 1px),
+    rgba(128, 150, 138, 0.42) 10%
+  );
+}
+
+/* Center zero marker for bipolar (-100..+100) sliders */
+.pro-slider-zero {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Active fill bar (grows from 0 center on bipolar, or from left on 0..100) */
+.pro-slider-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.pro-slider[data-track="temperature"] .pro-slider-track,
+.pro-slider[data-track="tint"] .pro-slider-track,
+.pro-slider[data-track="hue"] .pro-slider-track {
+  height: 7px;
+}
+
+.pro-slider[data-track="temperature"] .pro-slider-fill,
+.pro-slider[data-track="tint"] .pro-slider-fill,
+.pro-slider[data-track="hue"] .pro-slider-fill {
+  background: transparent;
+}
+
+.pro-slider[data-track="temperature"] .pro-slider-track {
+  background: linear-gradient(90deg, #4f9cf9 0%, #dbe5df 50%, #f59e0b 100%);
+}
+
+.pro-slider[data-track="tint"] .pro-slider-track {
+  background: linear-gradient(90deg, #34d399 0%, #dbe5df 50%, #ec4899 100%);
+}
+
+.pro-slider[data-track="hue"] .pro-slider-track {
+  background: linear-gradient(90deg, #ef4444, #f59e0b, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ec4899);
+}
+
+/* Smooth finger-following thumb knob */
+.pro-slider-thumb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--slider-thumb-bg);
+  border: 2.5px solid var(--slider-thumb-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  will-change: left, transform;
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.14s ease, border-color 0.14s ease;
+}
+
+.pro-slider.dragging .pro-slider-thumb {
+  transform: translate(-50%, -50%) scale(1.22);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 6px var(--accent-soft), 0 4px 14px rgba(0, 0, 0, 0.36);
+}
+
+/* Floating live readout bubble that glides above your fingertip while dragging */
+.pro-slider-bubble {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px) scale(0.86);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pro-slider-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--accent);
+}
+
+.pro-slider.dragging .pro-slider-bubble {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+/* Fallback styles for any unenhanced native range inputs */
+input[type="range"]:not(.pro-slider-native) {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
@@ -1265,51 +1428,18 @@ input[type="range"] {
   background: var(--slider-track);
   outline: none;
   cursor: pointer;
-  touch-action: pan-y;
+  touch-action: none;
 }
 
-input[type="range"]::-webkit-slider-thumb {
+input[type="range"]:not(.pro-slider-native)::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--slider-thumb-bg);
   border: 2.5px solid var(--slider-thumb-border);
   box-shadow: 0 1px 6px rgba(18, 48, 30, 0.25);
-  transition: transform 0.1s ease, background 0.15s ease;
-}
-
-input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.12);
-}
-
-input[type="range"]:active::-webkit-slider-thumb {
-  background: var(--accent);
-}
-
-input[type="range"]::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--slider-thumb-bg);
-  border: 2.5px solid var(--slider-thumb-border);
-  cursor: pointer;
-}
-
-/* Intuitive colored range tracks */
-#adj-temperature,
-input[data-track="temperature"] {
-  background: linear-gradient(90deg, #4f9cf9 0%, #e5ece8 50%, #f59e0b 100%);
-}
-
-#adj-tint,
-input[data-track="tint"] {
-  background: linear-gradient(90deg, #34d399 0%, #e5ece8 50%, #ec4899 100%);
-}
-
-.range-hue {
-  background: linear-gradient(90deg, #ef4444, #f59e0b, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ec4899);
 }
 
 /* Crop & Frame Unified Compact Controls */
@@ -1686,14 +1816,18 @@ input[data-track="tint"] {
     height: 32px;
   }
 
-  input[type="range"]::-webkit-slider-thumb {
-    width: 22px;
-    height: 22px;
+  .pro-slider {
+    height: 42px;
   }
 
-  input[type="range"]::-moz-range-thumb {
-    width: 22px;
-    height: 22px;
+  .pro-slider-thumb {
+    width: 26px;
+    height: 26px;
+  }
+
+  .pro-slider-bubble {
+    bottom: calc(100% + 12px);
+    font-size: 12px;
   }
 
   .transform-grid {
