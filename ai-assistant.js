@@ -2,11 +2,19 @@
   'use strict';
 
   const GEMINI_V1BETA_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
-  const MODEL_COLOR_AI = 'gemini-4-hydrogen';
-  const MODEL_COLOR_FALLBACKS = ['gemini-4-hydrogen', 'gemini-3.5-flash-lite'];
+  const MODEL_COLOR_AI = 'gemini-3.8-flash';
+  const MODEL_COLOR_FALLBACKS = [
+    'gemini-3.8-flash',
+    'gemini-4-hydrogen',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+  ];
   const MODEL_IMAGE_AI = 'gemini-nano-banana-2.1';
   const MODEL_IMAGE_FALLBACKS = ['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image'];
   const STORAGE_KEY = 'lumina-gemini-api-key';
+  let lastHealthyColorModel = null;
 
   function clamp(v, min, max) {
     return v < min ? min : v > max ? max : v;
@@ -585,13 +593,13 @@
         }
         const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
         lastError = new Error(msg);
-        // Stop retrying transport on definitive API errors (400/401/403/404/429)
-        if (res.status >= 400 && res.status < 500) {
-          throw lastError;
-        }
+        lastError.status = res.status;
+        // Stop retrying alternate transport URLs once Google API returned an HTTP error
+        // (let callWithModelFallback immediately fail over to the next healthy Gemini model!)
+        throw lastError;
       } catch (err) {
         lastError = err;
-        // Only continue to next transport if this was a network/CORS failure (TypeError)
+        // Only continue to next transport URL if this was a network/CORS failure (TypeError)
         if (!(err instanceof TypeError)) {
           throw err;
         }
@@ -600,23 +608,63 @@
     throw lastError || new Error('Không thể kết nối tới Google Gemini API (v1beta)');
   }
 
+  function isTransientOverloadError(err) {
+    const msg = (err && err.message) || '';
+    const status = err && err.status;
+    return status === 503 || status === 500 || status === 504 || status === 429 ||
+      /high demand|overloaded|unavailable|temporarily|try again later|rate limit|resource exhausted/i.test(msg);
+  }
+
+  function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   /**
-   * Calls Gemini across an ordered list of preferred + fallback models (great for Free tier!).
+   * Calls Gemini across an ordered pool of Free-Tier Vision models with sticky healthy-model priority
+   * and automatic short backoff retry if Google has a temporary 503 high-demand spike.
    */
   async function callWithModelFallback(apiKey, models, bodyBuilder) {
+    // Prioritize the last model that responded cleanly during this session
+    const ordered = models.slice();
+    if (lastHealthyColorModel && ordered.includes(lastHealthyColorModel)) {
+      const idx = ordered.indexOf(lastHealthyColorModel);
+      ordered.splice(idx, 1);
+      ordered.unshift(lastHealthyColorModel);
+    }
+
     let lastError = null;
-    for (let i = 0; i < models.length; i++) {
-      const model = models[i];
-      try {
-        const data = await callGeminiInteractions(apiKey, bodyBuilder(model));
-        return { data, model };
-      } catch (err) {
-        lastError = err;
-        // On invalid key, fail fast without trying other models
-        if (err && /API key not valid|invalid api key|401/i.test(err.message || '')) {
-          throw err;
+    let sawTransient = false;
+
+    for (let round = 0; round < 2; round++) {
+      const roundList = round === 0 ? ordered : ordered.slice(0, Math.min(3, ordered.length));
+      if (round === 1) {
+        if (!sawTransient) break;
+        await sleepMs(1600);
+      }
+
+      for (let i = 0; i < roundList.length; i++) {
+        const model = roundList[i];
+        try {
+          const data = await callGeminiInteractions(apiKey, bodyBuilder(model));
+          if (MODEL_COLOR_FALLBACKS.includes(model)) {
+            lastHealthyColorModel = model;
+          }
+          return { data, model };
+        } catch (err) {
+          lastError = err;
+          if (err && /API key not valid|invalid api key|API_KEY_INVALID|401/i.test(err.message || '')) {
+            throw err;
+          }
+          if (isTransientOverloadError(err)) {
+            sawTransient = true;
+            if (lastHealthyColorModel === model) lastHealthyColorModel = null;
+          }
         }
       }
+    }
+
+    if (lastError && sawTransient && /high demand|overloaded|unavailable|503/i.test(lastError.message || '')) {
+      lastError.isHighDemand = true;
     }
     throw lastError || new Error('Không gọi được model Gemini');
   }
@@ -849,7 +897,7 @@
       }));
       return res;
     } catch (schemaErr) {
-      if (schemaErr && /API key|quota|billing|401|403|429/i.test(schemaErr.message || '')) {
+      if (schemaErr && (schemaErr.isHighDemand || /API key|quota|billing|high demand|overloaded|unavailable|try again later|401|403|429|503/i.test(schemaErr.message || ''))) {
         throw schemaErr;
       }
       const fallbackParts = inputParts.map((part, idx) => (

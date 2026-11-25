@@ -1966,9 +1966,18 @@
     textEl.textContent = text;
     bubble.appendChild(textEl);
 
-    if (options.showUndo || options.showEraseJump) {
+    if (options.showUndo || options.showEraseJump || options.retryPrompt) {
       const actions = document.createElement('div');
       actions.className = 'chat-bubble-actions';
+
+      if (options.retryPrompt) {
+        const retryChip = document.createElement('button');
+        retryChip.type = 'button';
+        retryChip.className = 'chat-mini-btn primary';
+        retryChip.textContent = '🔄 Thử lại';
+        retryChip.addEventListener('click', () => executeAiPrompt(options.retryPrompt, Boolean(options.retryGen)));
+        actions.appendChild(retryChip);
+      }
 
       if (options.showUndo) {
         const undoChip = document.createElement('button');
@@ -1982,7 +1991,7 @@
       if (options.showEraseJump) {
         const eraseChip = document.createElement('button');
         eraseChip.type = 'button';
-        eraseChip.className = 'chat-mini-btn primary';
+        eraseChip.className = 'chat-mini-btn' + (options.retryPrompt ? '' : ' primary');
         eraseChip.textContent = '🪄 Mở Cọ tẩy miễn phí';
         eraseChip.addEventListener('click', () => setEraserMode(true, false));
         actions.appendChild(eraseChip);
@@ -2013,9 +2022,18 @@
     textEl.textContent = text;
     bubble.appendChild(textEl);
 
-    if (options.showUndo || options.showEraseJump) {
+    if (options.showUndo || options.showEraseJump || options.retryPrompt) {
       const actions = document.createElement('div');
       actions.className = 'chat-bubble-actions';
+
+      if (options.retryPrompt) {
+        const retryChip = document.createElement('button');
+        retryChip.type = 'button';
+        retryChip.className = 'chat-mini-btn primary';
+        retryChip.textContent = '🔄 Thử lại';
+        retryChip.addEventListener('click', () => executeAiPrompt(options.retryPrompt, Boolean(options.retryGen)));
+        actions.appendChild(retryChip);
+      }
 
       if (options.showUndo) {
         const undoChip = document.createElement('button');
@@ -2029,7 +2047,7 @@
       if (options.showEraseJump) {
         const eraseChip = document.createElement('button');
         eraseChip.type = 'button';
-        eraseChip.className = 'chat-mini-btn primary';
+        eraseChip.className = 'chat-mini-btn' + (options.retryPrompt ? '' : ' primary');
         eraseChip.textContent = '🪄 Mở Cọ tẩy miễn phí';
         eraseChip.addEventListener('click', () => setEraserMode(true, false));
         actions.appendChild(eraseChip);
@@ -2575,8 +2593,17 @@
         updateChatMsg(loadingMsg, `✨ ${visionRes.message}${extraNote}`, { showUndo: true });
         showToast('AI đã tự động xóa & hoàn thiện ảnh xong!');
       } catch (err) {
-        updateChatMsg(loadingMsg, `Lỗi Gemini Vision AI: ${err.message || err}`, { kind: 'error', showEraseJump: true });
-        showToast('Lỗi xử lý AI');
+        const isOverload = Boolean(err && (err.isHighDemand || /high demand|overloaded|503|unavailable/i.test(err.message || '')));
+        const friendlyErr = isOverload
+          ? 'Máy chủ Google Gemini đang quá tải tạm thời (đã tự động thử hết các model dự phòng). Bạn hãy bấm "🔄 Thử lại" sau vài giây hoặc dùng Cọ tẩy miễn phí ngay bên dưới nhé!'
+          : `Lỗi Gemini Vision AI: ${err.message || err}`;
+        updateChatMsg(loadingMsg, friendlyErr, {
+          kind: 'error',
+          showEraseJump: true,
+          retryPrompt: prompt,
+          retryGen: true,
+        });
+        showToast(isOverload ? 'Google Gemini đang quá tải tạm thời' : 'Lỗi xử lý AI');
       } finally {
         setAiBusy(false);
       }
