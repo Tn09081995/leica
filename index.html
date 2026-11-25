@@ -50,9 +50,9 @@
           </button>
         </div>
 
-        <div class="divider-v hide-mobile"></div>
+        <div class="divider-v desktop-only-controls"></div>
 
-        <div class="btn-group hide-mobile">
+        <div class="btn-group desktop-only-controls">
           <button class="btn btn-ghost btn-sm" id="splitToggleBtn" type="button" title="Bật/tắt so sánh Trước & Sau" disabled>
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="8 8 4 12 8 16"/><polyline points="16 8 20 12 16 16"/></svg>
             <span>So sánh</span>
@@ -76,7 +76,7 @@
           <svg id="themeIconMoon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="themeIconSun" class="hidden" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
-        <button class="btn btn-ghost hide-mobile" id="resetAllBtn" type="button" title="Đặt lại toàn bộ chỉnh sửa" disabled>
+        <button class="btn btn-ghost desktop-only-controls" id="resetAllBtn" type="button" title="Đặt lại toàn bộ chỉnh sửa" disabled>
           Đặt lại
         </button>
         <button class="btn btn-primary btn-export" id="exportOpenBtn" type="button" disabled>
@@ -143,18 +143,19 @@
             </div>
           </div>
 
-          <!-- Floating quick actions bar on Mobile (Compare / Original / Reset) -->
+          <!-- Floating quick actions bar beneath photo (Unified PC & Mobile) -->
           <div class="mobile-stage-bar" id="mobileStageBar">
             <button type="button" class="stage-chip" id="mobileSplitBtn" title="So sánh Trước & Sau">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="8 8 4 12 8 16"/><polyline points="16 8 20 12 16 16"/></svg>
               <span>So sánh</span>
             </button>
-            <button type="button" class="stage-chip" id="mobileHoldOrigBtn" title="Nhấn giữ để xem ảnh gốc">
+            <button type="button" class="stage-chip" id="mobileHoldOrigBtn" title="Nhấn giữ để xem ảnh gốc (hoặc phím \)">
               <span>Giữ xem gốc</span>
             </button>
             <button type="button" class="stage-chip" id="mobileResetBtn" title="Đặt lại chỉnh sửa">
               <span>Đặt lại</span>
             </button>
+            <span class="stage-chip stage-dim-chip mono" id="stageDimChip">0 × 0 px</span>
           </div>
 
           <!-- Floating status pill (Desktop) -->

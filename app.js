@@ -88,6 +88,7 @@
     mobileSplitBtn: document.getElementById('mobileSplitBtn'),
     mobileHoldOrigBtn: document.getElementById('mobileHoldOrigBtn'),
     mobileResetBtn: document.getElementById('mobileResetBtn'),
+    stageDimChip: document.getElementById('stageDimChip'),
 
     mobileAdjTitle: document.getElementById('mobileAdjTitle'),
     mobileAdjVal: document.getElementById('mobileAdjVal'),
@@ -804,7 +805,9 @@
     // Update dimensions badge (show true cropped dimensions)
     const trueW = Math.round(result.fullWidth * (inCropMode ? state.transform.crop.w : 1));
     const trueH = Math.round(result.fullHeight * (inCropMode ? state.transform.crop.h : 1));
-    els.imageDimLabel.textContent = `${trueW} × ${trueH} px`;
+    const dimText = `${trueW} × ${trueH} px`;
+    els.imageDimLabel.textContent = dimText;
+    if (els.stageDimChip) els.stageDimChip.textContent = dimText;
 
     // Update Histogram
     const stats = P.drawHistogram(result.imageData, els.histogramCanvas);
@@ -823,8 +826,8 @@
     if (!sourceImage) return;
     const stageRect = els.stageContainer.getBoundingClientRect();
     const isMobile = window.innerWidth <= 780;
-    const padW = isMobile ? 24 : 56;
-    const padH = isMobile ? 58 : 82;
+    const padW = isMobile ? 24 : 48;
+    const padH = isMobile ? 58 : 68;
     const availW = Math.max(120, stageRect.width - padW);
     const availH = Math.max(120, stageRect.height - padH);
 
@@ -1570,6 +1573,16 @@
       const ro = new ResizeObserver(() => fitCanvasToViewport());
       ro.observe(els.stageContainer);
     }
+
+    // Enable smooth mouse-wheel horizontal scrolling on horizontal strips for desktop users
+    document.querySelectorAll('.preset-grid, .mobile-tool-strip, .aspect-pills, .preset-cat-pills').forEach((strip) => {
+      strip.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && strip.scrollWidth > strip.clientWidth) {
+          e.preventDefault();
+          strip.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+    });
   }
 
   // --- Init ---
