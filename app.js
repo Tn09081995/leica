@@ -118,16 +118,22 @@
 
     toast: document.getElementById('toast'),
 
-    // AI Assistant elements
+    // Floating AI Chat Bubble & Unified Assistant elements
+    aiFab: document.getElementById('aiFab'),
+    aiFabDot: document.getElementById('aiFabDot'),
+    aiChatWindow: document.getElementById('aiChatWindow'),
+    aiChatCloseBtn: document.getElementById('aiChatCloseBtn'),
+    aiChatClearBtn: document.getElementById('aiChatClearBtn'),
+    aiChatFeed: document.getElementById('aiChatFeed'),
     aiModeTabs: document.getElementById('aiModeTabs'),
     aiConfigBtn: document.getElementById('aiConfigBtn'),
     aiKeyDot: document.getElementById('aiKeyDot'),
     aiKeyLabel: document.getElementById('aiKeyLabel'),
-    aiReplyBox: document.getElementById('aiReplyBox'),
-    aiReplyText: document.getElementById('aiReplyText'),
+    aiOpenEraserBtn: document.getElementById('aiOpenEraserBtn'),
     aiQuickChips: document.getElementById('aiQuickChips'),
     aiPromptForm: document.getElementById('aiPromptForm'),
     aiPromptInput: document.getElementById('aiPromptInput'),
+    aiMicBtn: document.getElementById('aiMicBtn'),
     aiSendBtn: document.getElementById('aiSendBtn'),
     aiSpinner: document.getElementById('aiSpinner'),
 
@@ -139,10 +145,10 @@
     aiKeyTestStatus: document.getElementById('aiKeyTestStatus'),
     aiKeySaveBtn: document.getElementById('aiKeySaveBtn'),
 
-    // Magic Eraser elements
-    aiChatView: document.getElementById('aiChatView'),
-    aiEraseView: document.getElementById('aiEraseView'),
-    aiQuickEraseJumpBtn: document.getElementById('aiQuickEraseJumpBtn'),
+    // Floating Magic Eraser elements
+    aiEraseFloat: document.getElementById('aiEraseFloat'),
+    eraserBackChatBtn: document.getElementById('eraserBackChatBtn'),
+    eraserDoneBtn: document.getElementById('eraserDoneBtn'),
     eraserCanvas: document.getElementById('eraserCanvas'),
     brushCursor: document.getElementById('brushCursor'),
     eraserSize: document.getElementById('eraserSize'),
@@ -185,7 +191,9 @@
   let historyIndex = -1;
 
   // AI transient state
-  let aiMode = 'color'; // 'color' | 'erase' | 'generative'
+  let aiMode = 'color'; // 'color' | 'generative'
+  let aiChatOpen = false;
+  let eraserActive = false;
   let aiBusy = false;
   let aiPrevInteractionId = null;
   let geminiPaidImageBlocked = false;
@@ -1033,7 +1041,7 @@
     if (!sourceImage) return;
 
     const inCropMode = activeTab === 'crop';
-    const inEraseMode = activeTab === 'ai' && aiMode === 'erase';
+    const inEraseMode = eraserActive;
     const renderState = cloneState(state);
 
     // When in Crop tab, show uncropped frame (without outer photo border) so user can freely adjust crop
@@ -1695,7 +1703,7 @@
       });
     }
 
-    // Auto Enhance 1-tap VIP
+    // Auto Enhance 1-tap VIP (lives inside AI Chat Bubble)
     if (els.autoEnhanceBtn) {
       els.autoEnhanceBtn.addEventListener('click', () => {
         if (!sourceImage) return;
@@ -1704,6 +1712,7 @@
         syncControlsFromState();
         pushHistory();
         scheduleRender();
+        appendChatMsg('ai', '✨ Đã tự động cân bằng ánh sáng, tương phản và màu chuẩn cho bức ảnh của bạn.', { showUndo: true });
         showToast('Đã tự động cân bằng ánh sáng & màu chuẩn');
       });
     }
@@ -1831,6 +1840,10 @@
         closeExportModal();
       } else if (e.key === 'Escape' && els.aiConfigModal && !els.aiConfigModal.classList.contains('hidden')) {
         els.aiConfigModal.classList.add('hidden');
+      } else if (e.key === 'Escape' && aiChatOpen) {
+        closeAiChat();
+      } else if (e.key === 'Escape' && eraserActive) {
+        setEraserMode(false, false);
       } else if (!inInput && e.key === '\\' && sourceImage && !holdingOriginal) {
         holdingOriginal = true;
         els.holdCompareBtn.classList.add('active');
@@ -1874,50 +1887,179 @@
     bindAiEvents();
   }
 
-  // --- Lumina AI Photo Assistant UI Controller ---
+  // --- Floating AI Chat Bubble & Unified Assistant Controller ---
   function updateAiKeyBadge() {
-    if (!AI || !els.aiConfigBtn) return;
+    if (!AI) return;
     const hasKey = Boolean(AI.getApiKey());
-    els.aiConfigBtn.classList.toggle('connected', hasKey);
+    if (els.aiConfigBtn) els.aiConfigBtn.classList.toggle('connected', hasKey);
+    if (els.aiFab) els.aiFab.classList.toggle('connected', hasKey);
     if (els.aiKeyLabel) {
-      els.aiKeyLabel.textContent = hasKey ? 'Gemini đã kết nối' : 'Gemini API';
+      els.aiKeyLabel.textContent = hasKey ? 'Gemini ON' : 'Gemini API';
     }
   }
 
-  function setAiMode(mode) {
-    aiMode = mode === 'generative' ? 'generative' : mode === 'erase' ? 'erase' : 'color';
-    if (els.aiModeTabs) {
-      els.aiModeTabs.querySelectorAll('.seg-btn').forEach((b) => {
-        b.classList.toggle('active', b.dataset.aimode === aiMode);
-      });
-    }
-    const isErase = aiMode === 'erase';
-    if (els.aiChatView) els.aiChatView.classList.toggle('hidden', isErase);
-    if (els.aiEraseView) els.aiEraseView.classList.toggle('hidden', !isErase);
+  function openAiChat() {
+    if (!els.aiChatWindow) return;
+    if (eraserActive) setEraserMode(false, false);
+    aiChatOpen = true;
+    els.aiChatWindow.classList.remove('hidden');
+    if (els.aiFab) els.aiFab.classList.add('open');
+    scrollChatToBottom();
+  }
 
-    if (els.aiPromptInput) {
-      els.aiPromptInput.placeholder = aiMode === 'generative'
-        ? 'Mô tả biến đổi ảnh (VD: xóa người nền sau, đổi nền biển hoàng hôn...)'
-        : 'Nhập yêu cầu sửa ảnh... (VD: sáng hơn chút, trắng hồng da, màu Leica)';
+  function closeAiChat() {
+    if (!els.aiChatWindow) return;
+    aiChatOpen = false;
+    els.aiChatWindow.classList.add('hidden');
+    if (els.aiFab && !eraserActive) els.aiFab.classList.remove('open');
+  }
+
+  function setEraserMode(active, reopenChat) {
+    if (active && !sourceImage) {
+      showToast('Hãy mở ảnh hoặc chọn Ảnh mẫu trước khi dùng Cọ tẩy');
+      return;
+    }
+    eraserActive = Boolean(active);
+    if (els.aiEraseFloat) els.aiEraseFloat.classList.toggle('hidden', !eraserActive);
+    if (eraserActive) {
+      aiChatOpen = false;
+      if (els.aiChatWindow) els.aiChatWindow.classList.add('hidden');
+      if (els.aiFab) els.aiFab.classList.add('open');
+      if (splitCompare) {
+        splitCompare = false;
+        els.splitToggleBtn.classList.remove('active');
+        if (els.mobileSplitBtn) els.mobileSplitBtn.classList.remove('active');
+      }
+      if (activeTab === 'crop') switchTab('presets');
+      showToast('Tô ngón tay hoặc chuột lên vật thể cần xóa');
+    } else {
+      if (reopenChat) {
+        openAiChat();
+      } else if (els.aiFab && !aiChatOpen) {
+        els.aiFab.classList.remove('open');
+      }
     }
     updateEraserOverlayVisibility();
     scheduleRender();
   }
 
-  function setAiReply(msg, kind, showEraseJump) {
-    if (!els.aiReplyBox || !els.aiReplyText) return;
-    els.aiReplyBox.classList.toggle('is-error', kind === 'error');
-    els.aiReplyBox.classList.toggle('is-loading', kind === 'loading');
-    els.aiReplyText.textContent = msg;
-    if (els.aiQuickEraseJumpBtn) {
-      els.aiQuickEraseJumpBtn.classList.toggle('hidden', !showEraseJump);
+  function scrollChatToBottom() {
+    if (!els.aiChatFeed) return;
+    requestAnimationFrame(() => {
+      els.aiChatFeed.scrollTop = els.aiChatFeed.scrollHeight;
+    });
+  }
+
+  function appendChatMsg(role, text, opts) {
+    if (!els.aiChatFeed) return null;
+    const options = opts || {};
+    const wrap = document.createElement('div');
+    wrap.className = `chat-msg ${role === 'user' ? 'chat-msg-user' : 'chat-msg-ai'}`;
+    if (options.kind === 'error') wrap.classList.add('is-error');
+    if (options.kind === 'loading') wrap.classList.add('is-loading');
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+
+    const textEl = document.createElement('div');
+    textEl.className = 'chat-bubble-text';
+    textEl.textContent = text;
+    bubble.appendChild(textEl);
+
+    if (options.showUndo || options.showEraseJump) {
+      const actions = document.createElement('div');
+      actions.className = 'chat-bubble-actions';
+
+      if (options.showUndo) {
+        const undoChip = document.createElement('button');
+        undoChip.type = 'button';
+        undoChip.className = 'chat-mini-btn';
+        undoChip.textContent = '↩ Hoàn tác';
+        undoChip.addEventListener('click', () => undo());
+        actions.appendChild(undoChip);
+      }
+
+      if (options.showEraseJump) {
+        const eraseChip = document.createElement('button');
+        eraseChip.type = 'button';
+        eraseChip.className = 'chat-mini-btn primary';
+        eraseChip.textContent = '🪄 Mở Cọ tẩy miễn phí';
+        eraseChip.addEventListener('click', () => setEraserMode(true, false));
+        actions.appendChild(eraseChip);
+      }
+
+      bubble.appendChild(actions);
+    }
+
+    wrap.appendChild(bubble);
+    els.aiChatFeed.appendChild(wrap);
+    scrollChatToBottom();
+    return wrap;
+  }
+
+  function updateChatMsg(msgEl, text, opts) {
+    if (!msgEl) return appendChatMsg('ai', text, opts);
+    const options = opts || {};
+    msgEl.classList.remove('is-error', 'is-loading');
+    if (options.kind === 'error') msgEl.classList.add('is-error');
+    if (options.kind === 'loading') msgEl.classList.add('is-loading');
+
+    const bubble = msgEl.querySelector('.chat-bubble');
+    if (!bubble) return msgEl;
+    bubble.innerHTML = '';
+
+    const textEl = document.createElement('div');
+    textEl.className = 'chat-bubble-text';
+    textEl.textContent = text;
+    bubble.appendChild(textEl);
+
+    if (options.showUndo || options.showEraseJump) {
+      const actions = document.createElement('div');
+      actions.className = 'chat-bubble-actions';
+
+      if (options.showUndo) {
+        const undoChip = document.createElement('button');
+        undoChip.type = 'button';
+        undoChip.className = 'chat-mini-btn';
+        undoChip.textContent = '↩ Hoàn tác';
+        undoChip.addEventListener('click', () => undo());
+        actions.appendChild(undoChip);
+      }
+
+      if (options.showEraseJump) {
+        const eraseChip = document.createElement('button');
+        eraseChip.type = 'button';
+        eraseChip.className = 'chat-mini-btn primary';
+        eraseChip.textContent = '🪄 Mở Cọ tẩy miễn phí';
+        eraseChip.addEventListener('click', () => setEraserMode(true, false));
+        actions.appendChild(eraseChip);
+      }
+
+      bubble.appendChild(actions);
+    }
+
+    scrollChatToBottom();
+    return msgEl;
+  }
+
+  function setAiMode(mode) {
+    aiMode = mode === 'generative' ? 'generative' : 'color';
+    if (els.aiModeTabs) {
+      els.aiModeTabs.querySelectorAll('.seg-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.aimode === aiMode);
+      });
+    }
+    if (els.aiPromptInput) {
+      els.aiPromptInput.placeholder = aiMode === 'generative'
+        ? 'VD: xoá dây chuyền trên cổ, đổi màu váy sang đỏ...'
+        : 'Nhắn yêu cầu sửa ảnh cho AI...';
     }
   }
 
   // --- Free Client-Side Magic Eraser (Tẩy vật thể) ---
   function updateEraserOverlayVisibility() {
     if (!els.eraserCanvas) return;
-    const active = activeTab === 'ai' && aiMode === 'erase' && Boolean(sourceImage) && !splitCompare;
+    const active = eraserActive && Boolean(sourceImage) && !splitCompare;
     els.eraserCanvas.classList.toggle('hidden', !active);
     if (!active && els.brushCursor) {
       els.brushCursor.classList.add('hidden');
@@ -2097,12 +2239,128 @@
       els.eraserUndoBtn.addEventListener('click', () => undo());
     }
 
-    if (els.aiQuickEraseJumpBtn) {
-      els.aiQuickEraseJumpBtn.addEventListener('click', () => {
-        setAiMode('erase');
-        showToast('Hãy tô ngón tay/chuột trực tiếp lên vật thể cần xóa');
-      });
+    if (els.eraserBackChatBtn) {
+      els.eraserBackChatBtn.addEventListener('click', () => setEraserMode(false, true));
     }
+
+    if (els.eraserDoneBtn) {
+      els.eraserDoneBtn.addEventListener('click', () => setEraserMode(false, false));
+    }
+  }
+
+  function initDraggableAiFab() {
+    if (!els.aiFab) return;
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let origLeft = 0;
+    let origTop = 0;
+
+    els.aiFab.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
+      dragging = true;
+      moved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = els.aiFab.getBoundingClientRect();
+      origLeft = rect.left;
+      origTop = rect.top;
+      try {
+        els.aiFab.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    });
+
+    els.aiFab.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) > 7) {
+        moved = true;
+        els.aiFab.classList.add('dragging-fab');
+      }
+      if (!moved) return;
+      const rect = els.aiFab.getBoundingClientRect();
+      const maxX = Math.max(8, window.innerWidth - rect.width - 8);
+      const maxY = Math.max(8, window.innerHeight - rect.height - 8);
+      const nextX = clamp(origLeft + dx, 8, maxX);
+      const nextY = clamp(origTop + dy, 8, maxY);
+      els.aiFab.style.left = `${nextX}px`;
+      els.aiFab.style.top = `${nextY}px`;
+      els.aiFab.style.right = 'auto';
+      els.aiFab.style.bottom = 'auto';
+    });
+
+    const endFab = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      els.aiFab.classList.remove('dragging-fab');
+      try {
+        if (e && els.aiFab.hasPointerCapture(e.pointerId)) {
+          els.aiFab.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      if (!moved) {
+        if (aiChatOpen) closeAiChat();
+        else openAiChat();
+      }
+    };
+
+    els.aiFab.addEventListener('pointerup', endFab);
+    els.aiFab.addEventListener('pointercancel', endFab);
+  }
+
+  function initVoiceInput() {
+    if (!els.aiMicBtn) return;
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let listening = false;
+
+    els.aiMicBtn.addEventListener('click', () => {
+      if (!SpeechRec) {
+        showToast('Trình duyệt này chưa hỗ trợ micro giọng nói — hãy gõ trực tiếp nhé');
+        return;
+      }
+      if (listening && recognition) {
+        recognition.stop();
+        return;
+      }
+      recognition = new SpeechRec();
+      recognition.lang = 'vi-VN';
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        listening = true;
+        els.aiMicBtn.classList.add('listening');
+        showToast('🎙️ Đang nghe... hãy nói yêu cầu sửa ảnh');
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (els.aiPromptInput) els.aiPromptInput.value = transcript.trim();
+        const last = event.results[event.results.length - 1];
+        if (last && last.isFinal && transcript.trim()) {
+          executeAiPrompt(transcript.trim(), false);
+        }
+      };
+
+      recognition.onerror = () => {
+        showToast('Không nghe rõ giọng nói, bạn thử nói lại hoặc gõ nhé');
+      };
+
+      recognition.onend = () => {
+        listening = false;
+        els.aiMicBtn.classList.remove('listening');
+      };
+
+      try {
+        recognition.start();
+      } catch (_) {}
+    });
   }
 
   function setAiBusy(busy) {
@@ -2111,7 +2369,7 @@
     if (els.aiPromptInput) els.aiPromptInput.disabled = busy;
     if (els.aiSpinner) els.aiSpinner.classList.toggle('hidden', !busy);
     const lbl = els.aiSendBtn && els.aiSendBtn.querySelector('.ai-send-label');
-    if (lbl) lbl.textContent = busy ? 'Đang xử lý...' : 'Sửa ảnh';
+    if (lbl) lbl.classList.toggle('hidden', busy);
   }
 
   function openAiConfigModal() {
@@ -2167,8 +2425,14 @@
   async function executeAiPrompt(promptText, forceGenerative) {
     const prompt = (promptText || '').trim();
     if (!prompt || aiBusy) return;
+
+    if (!aiChatOpen) openAiChat();
+    appendChatMsg('user', prompt);
+    if (els.aiPromptInput) els.aiPromptInput.value = '';
+
     if (!sourceImage) {
-      showToast('Hãy mở ảnh hoặc chọn Ảnh mẫu trước khi dùng AI');
+      appendChatMsg('ai', 'Bạn hãy chọn ảnh (hoặc bấm "Thử ảnh mẫu") trước để tôi bắt đầu sửa ảnh giúp bạn nhé!', { kind: 'error' });
+      showToast('Hãy mở ảnh trước khi dùng AI');
       return;
     }
 
@@ -2179,7 +2443,7 @@
     // Generative / Object Removal / Regional Editing Mode
     if (useGenerative) {
       if (!apiKey) {
-        setAiReply('Hãy nhập Gemini API Key (miễn phí) để AI tự động định vị và xóa/sửa vật thể theo câu lệnh của bạn.', 'error', true);
+        appendChatMsg('ai', 'Hãy nhập Gemini API Key miễn phí (bấm "Gemini API" ở góc trên) để AI tự động định vị và xóa/sửa vật thể, hoặc dùng ngay Cọ tẩy miễn phí bên dưới.', { kind: 'error', showEraseJump: true });
         openAiConfigModal();
         return;
       }
@@ -2193,9 +2457,10 @@
         includeFrame: false,
       }).processedCanvas;
 
+      const loadingMsg = appendChatMsg('ai', '✨ Đang phân tích ảnh và thực hiện yêu cầu của bạn...', { kind: 'loading' });
+
       // 1. Try Paid-Tier native Gemini Image Editing first (unless already known Free Tier limit=0)
       if (!geminiPaidImageBlocked) {
-        setAiReply('Gemini AI đang phân tích và chỉnh sửa ảnh theo yêu cầu của bạn...', 'loading');
         try {
           const res = await AI.runGeminiImageEdit(prompt, rendered, apiKey, aiPrevInteractionId);
           aiPrevInteractionId = res.interactionId || aiPrevInteractionId;
@@ -2210,16 +2475,15 @@
           syncControlsFromState();
           pushHistory();
           scheduleRender();
-          setAiReply(res.message, 'ok');
+          updateChatMsg(loadingMsg, `✨ ${res.message}`, { showUndo: true });
           showToast('Gemini AI đã sửa ảnh xong');
           setAiBusy(false);
           return;
         } catch (err) {
           if (err && err.isFreeTierImageLimit) {
             geminiPaidImageBlocked = true;
-            // Seamlessly continue to Step 2: Free-Tier Gemini 4 Hydrogen Vision + Auto Inpainting!
           } else {
-            setAiReply(`Lỗi Gemini AI: ${err.message || err}`, 'error');
+            updateChatMsg(loadingMsg, `Lỗi Gemini AI: ${err.message || err}`, { kind: 'error', showEraseJump: true });
             showToast('Không thể kết nối Gemini AI');
             setAiBusy(false);
             return;
@@ -2228,13 +2492,13 @@
       }
 
       // 2. Automatic Free-Tier Mode: Gemini 4 Hydrogen Vision locates exact object -> Auto Inpaint / Recolor / Blur!
-      setAiReply('Gemini Vision AI đang tự tìm chính xác vật thể trong ảnh và xử lý tự động...', 'loading');
+      updateChatMsg(loadingMsg, '✨ Gemini Vision đang tự dò chính xác vật thể trong ảnh và xử lý tự động...', { kind: 'loading' });
       try {
         const visionRes = await AI.runGeminiVisionRegionEdit(prompt, rendered, apiKey);
         const plan = visionRes.plan;
 
         if (!plan || plan.found === false) {
-          setAiReply(visionRes.message || 'AI không tìm thấy đối tượng tương ứng trong ảnh. Hãy mô tả rõ hơn vị trí vật thể cần sửa.', 'error');
+          updateChatMsg(loadingMsg, visionRes.message || 'AI không tìm thấy đối tượng tương ứng trong ảnh. Hãy mô tả rõ hơn vị trí vật thể cần sửa.', { kind: 'error', showEraseJump: true });
           showToast('AI không tìm thấy vật thể yêu cầu');
           setAiBusy(false);
           return;
@@ -2244,7 +2508,7 @@
         const editResult = P.applyAiRegionEdit(sourceImage, mappedPlan);
 
         if (!editResult.applied) {
-          setAiReply('AI chưa khoanh được vùng cụ thể cho yêu cầu này. Hãy mô tả chi tiết hơn (VD: "xóa sợi dây chuyền trên cổ").', 'error', true);
+          updateChatMsg(loadingMsg, 'AI chưa khoanh được vùng cụ thể cho yêu cầu này. Hãy mô tả rõ hơn hoặc dùng Cọ tẩy miễn phí.', { kind: 'error', showEraseJump: true });
           setAiBusy(false);
           return;
         }
@@ -2253,10 +2517,10 @@
         generatePresetThumbnails();
         pushHistory();
         scheduleRender();
-        setAiReply(`${visionRes.message} (Nếu còn sót nét nhỏ, bạn có thể bấm "Sửa ảnh" lần nữa hoặc dùng Hoàn tác)`, 'ok');
+        updateChatMsg(loadingMsg, `✨ ${visionRes.message}`, { showUndo: true });
         showToast('AI đã tự động chỉnh sửa ảnh xong!');
       } catch (err) {
-        setAiReply(`Lỗi Gemini Vision AI: ${err.message || err}`, 'error', true);
+        updateChatMsg(loadingMsg, `Lỗi Gemini Vision AI: ${err.message || err}`, { kind: 'error', showEraseJump: true });
         showToast('Lỗi xử lý AI');
       } finally {
         setAiBusy(false);
@@ -2267,7 +2531,7 @@
     // Color & Smart Grading AI Mode
     if (apiKey && !wantsGen) {
       setAiBusy(true);
-      setAiReply('Gemini AI đang quan sát ảnh và cân chỉnh màu sắc theo yêu cầu...', 'loading');
+      const loadingMsg = appendChatMsg('ai', '✨ Gemini AI đang quan sát ảnh và cân chỉnh màu sắc...', { kind: 'loading' });
       try {
         const rendered = P.renderPipeline(sourceImage, state, {
           maxDim: 768,
@@ -2280,12 +2544,11 @@
         syncControlsFromState();
         pushHistory();
         scheduleRender();
-        setAiReply(res.message, 'ok');
+        updateChatMsg(loadingMsg, `✨ ${res.message}`, { showUndo: true });
         showToast('Gemini AI đã chỉnh màu xong');
         setAiBusy(false);
         return;
       } catch (err) {
-        // Gracefully fall back to built-in instant AI so user is never stuck!
         const fallback = AI.runLocalSmartAI(prompt, state, sourceImage, P);
         if (fallback.changed) {
           state = fallback.state;
@@ -2293,7 +2556,7 @@
           pushHistory();
           scheduleRender();
         }
-        setAiReply(`(Đã dùng AI tức thì do lỗi Gemini: ${err.message}) — ${fallback.message}`, 'error');
+        updateChatMsg(loadingMsg, `${fallback.message} (Chế độ tức thì — Gemini: ${err.message})`, { kind: 'error', showUndo: fallback.changed });
         setAiBusy(false);
         return;
       }
@@ -2302,8 +2565,8 @@
     // Instant Built-in Vietnamese AI (Zero latency, free, no API key required!)
     const res = AI.runLocalSmartAI(prompt, state, sourceImage, P);
     if (res.needsGeminiImage) {
-      setAiReply(res.message, 'error', true);
-      showToast('Bạn có thể dùng ngay 🪄 Tẩy vật thể miễn phí!');
+      appendChatMsg('ai', res.message, { kind: 'error', showEraseJump: true });
+      showToast('Gắn Gemini API Key hoặc dùng Cọ tẩy miễn phí!');
       return;
     }
     if (res.changed) {
@@ -2317,16 +2580,34 @@
       syncControlsFromState();
       pushHistory();
       scheduleRender();
-      setAiReply(res.message, 'ok');
+      appendChatMsg('ai', `✨ ${res.message}`, { showUndo: true });
       showToast('AI đã chỉnh ảnh theo yêu cầu');
     } else {
-      setAiReply(res.message, 'ok');
+      appendChatMsg('ai', res.message);
     }
   }
 
   function bindAiEvents() {
     if (!AI) return;
     updateAiKeyBadge();
+    initDraggableAiFab();
+    initVoiceInput();
+
+    if (els.aiChatCloseBtn) {
+      els.aiChatCloseBtn.addEventListener('click', closeAiChat);
+    }
+
+    if (els.aiChatClearBtn) {
+      els.aiChatClearBtn.addEventListener('click', () => {
+        if (!els.aiChatFeed) return;
+        els.aiChatFeed.innerHTML = '';
+        appendChatMsg('ai', 'Đã xóa lịch sử trò chuyện. Hãy nhắn hoặc nói yêu cầu sửa ảnh tiếp theo nhé!');
+      });
+    }
+
+    if (els.aiOpenEraserBtn) {
+      els.aiOpenEraserBtn.addEventListener('click', () => setEraserMode(true, false));
+    }
 
     if (els.aiModeTabs) {
       els.aiModeTabs.querySelectorAll('.seg-btn').forEach((btn) => {
