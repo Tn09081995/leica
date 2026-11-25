@@ -58,9 +58,27 @@
     tabPanes: document.querySelectorAll('.tab-pane'),
 
     presetGrid: document.getElementById('presetGrid'),
+    presetCatPills: document.getElementById('presetCatPills'),
     presetStrength: document.getElementById('presetStrength'),
     valPresetStrength: document.getElementById('val-presetStrength'),
     activePresetLabel: document.getElementById('activePresetLabel'),
+
+    autoEnhanceBtn: document.getElementById('autoEnhanceBtn'),
+    adjustModeTabs: document.getElementById('adjustModeTabs'),
+    adjPaneBasic: document.getElementById('adjPane-basic'),
+    adjPaneHsl: document.getElementById('adjPane-hsl'),
+
+    hslSwatches: document.getElementById('hslSwatches'),
+    hslActiveSwatch: document.getElementById('hslActiveSwatch'),
+    hslActiveName: document.getElementById('hslActiveName'),
+    hslHue: document.getElementById('hslHue'),
+    hslSat: document.getElementById('hslSat'),
+    hslLum: document.getElementById('hslLum'),
+    valHslHue: document.getElementById('val-hslHue'),
+    valHslSat: document.getElementById('val-hslSat'),
+    valHslLum: document.getElementById('val-hslLum'),
+    hslResetChannelBtn: document.getElementById('hslResetChannelBtn'),
+    hslResetAllBtn: document.getElementById('hslResetAllBtn'),
 
     slidersLight: document.getElementById('sliders-light'),
     slidersColor: document.getElementById('sliders-color'),
@@ -105,6 +123,7 @@
       presetId: 'original',
       presetStrength: 100,
       adjustments: Object.assign({}, P.DEFAULT_ADJUSTMENTS),
+      hsl: P.createDefaultHSL(),
       transform: {
         rotate: 0,
         flipH: false,
@@ -147,24 +166,30 @@
   let cropAspect = null; // null = free, or number (width / height in display space)
   let exportEstimateTimer = null;
   let activeMobileTool = 'exposure';
+  let activePresetCat = 'all';
+  let activeHslChannel = 'orange';
 
   const MOBILE_TOOLS = [
     { key: 'exposure',    short: 'Độ sáng',    icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>' },
     { key: 'contrast',    short: 'Tương phản', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor" stroke="none"/>' },
     { key: 'temperature', short: 'Độ ấm',      icon: '<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>' },
+    { key: 'skinGlow',    short: 'Tôn da VIP', icon: '<path d="M12 3l1.6 4.8L18.5 9.5l-4.9 1.7L12 16l-1.6-4.8L5.5 9.5l4.9-1.7L12 3z"/>' },
     { key: 'vibrance',    short: 'Độ tươi',    icon: '<polygon points="12 2 15 9 22 9.5 16.5 14 18.2 21 12 17.2 5.8 21 7.5 14 2 9.5 9 9 12 2"/>' },
-    { key: 'saturation',  short: 'Bão hòa',    icon: '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>' },
+    { key: 'clarity',     short: 'Trong trẻo', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' },
+    { key: 'dehaze',      short: 'Khử sương',  icon: '<path d="M3 15h18M5 11h14M7 7h10M9 19h6"/>' },
+    { key: 'glow',        short: 'Sáng mơ',    icon: '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8" stroke-dasharray="2 3"/>' },
     { key: 'highlights',  short: 'Vùng sáng',  icon: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 3"/>' },
     { key: 'shadows',     short: 'Vùng tối',   icon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>' },
+    { key: 'saturation',  short: 'Bão hòa',    icon: '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>' },
     { key: 'sharpen',     short: 'Sắc nét',    icon: '<polygon points="12 3 21 19 3 19 12 3"/>' },
     { key: 'vignette',    short: 'Tối góc',    icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="5"/>' },
     { key: 'fade',        short: 'Phim mờ',    icon: '<path d="M3 17l6-6 4 4 8-8"/><path d="M3 21h18"/>' },
     { key: 'grain',       short: 'Hạt phim',   icon: '<circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/><circle cx="18" cy="6" r="1.2" fill="currentColor"/><circle cx="8" cy="14" r="1.2" fill="currentColor"/><circle cx="15" cy="13" r="1.2" fill="currentColor"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/><circle cx="18" cy="18" r="1.2" fill="currentColor"/>' },
-    { key: 'blur',        short: 'Làm mờ',     icon: '<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="4"/>' },
-    { key: 'sepia',       short: 'Cổ điển',    icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M20 15l-5-5-9 9"/>' },
     { key: 'tint',        short: 'Sắc thái',   icon: '<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/>' },
     { key: 'whites',      short: 'Điểm trắng', icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>' },
     { key: 'blacks',      short: 'Điểm đen',   icon: '<circle cx="12" cy="12" r="8" fill="currentColor" opacity="0.25"/><circle cx="12" cy="12" r="8"/>' },
+    { key: 'blur',        short: 'Làm mờ',     icon: '<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="4"/>' },
+    { key: 'sepia',       short: 'Cổ điển',    icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M20 15l-5-5-9 9"/>' },
   ];
 
   function findSliderConfig(key) {
@@ -387,6 +412,7 @@
     els.mobileAdjRange.step = String(cfg.step);
     const cur = state.adjustments[key] || 0;
     els.mobileAdjRange.value = String(cur);
+    els.mobileAdjRange.dataset.track = (key === 'temperature' || key === 'tint') ? key : '';
     els.mobileAdjVal.textContent = formatSliderValue(key, cur);
 
     els.mobileToolStrip.querySelectorAll('.mobile-tool-btn').forEach((b) => {
@@ -402,11 +428,118 @@
     });
   }
 
+  // --- Pro 8-Channel HSL Mixer UI ---
+  function buildHslMixer() {
+    if (!els.hslSwatches) return;
+    els.hslSwatches.innerHTML = '';
+
+    P.HSL_CHANNELS.forEach((ch) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hsl-swatch-btn' + (ch.id === activeHslChannel ? ' active' : '');
+      btn.dataset.hslId = ch.id;
+      btn.title = ch.name;
+      btn.setAttribute('aria-label', ch.name);
+      btn.innerHTML = `<span class="swatch-dot" style="background:${ch.color}"></span>`;
+      btn.addEventListener('click', () => {
+        activeHslChannel = ch.id;
+        syncHslControls();
+      });
+      els.hslSwatches.appendChild(btn);
+    });
+
+    const bindHslSlider = (input, valEl, prop) => {
+      if (!input) return;
+      input.addEventListener('input', () => {
+        const v = parseInt(input.value, 10);
+        if (!state.hsl) state.hsl = P.createDefaultHSL();
+        state.hsl[activeHslChannel][prop] = v;
+        valEl.textContent = v > 0 ? `+${v}` : String(v);
+        updateHslDots();
+        scheduleRender();
+      });
+      input.addEventListener('change', () => {
+        if (sourceImage) pushHistory();
+      });
+      input.addEventListener('dblclick', () => {
+        if (!sourceImage) return;
+        if (state.hsl[activeHslChannel][prop] !== 0) {
+          state.hsl[activeHslChannel][prop] = 0;
+          syncHslControls();
+          pushHistory();
+          scheduleRender();
+        }
+      });
+    };
+
+    bindHslSlider(els.hslHue, els.valHslHue, 'h');
+    bindHslSlider(els.hslSat, els.valHslSat, 's');
+    bindHslSlider(els.hslLum, els.valHslLum, 'l');
+
+    if (els.hslResetChannelBtn) {
+      els.hslResetChannelBtn.addEventListener('click', () => {
+        if (!sourceImage) return;
+        state.hsl[activeHslChannel] = { h: 0, s: 0, l: 0 };
+        syncHslControls();
+        pushHistory();
+        scheduleRender();
+        showToast('Đã đặt lại kênh màu');
+      });
+    }
+
+    if (els.hslResetAllBtn) {
+      els.hslResetAllBtn.addEventListener('click', () => {
+        if (!sourceImage) return;
+        state.hsl = P.createDefaultHSL();
+        syncHslControls();
+        pushHistory();
+        scheduleRender();
+        showToast('Đã đặt lại toàn bộ HSL');
+      });
+    }
+
+    syncHslControls();
+  }
+
+  function syncHslControls() {
+    if (!els.hslSwatches) return;
+    if (!state.hsl) state.hsl = P.createDefaultHSL();
+    const chMeta = P.HSL_CHANNELS.find((c) => c.id === activeHslChannel) || P.HSL_CHANNELS[1];
+    const cur = state.hsl[activeHslChannel] || { h: 0, s: 0, l: 0 };
+
+    els.hslActiveName.textContent = chMeta.name;
+    els.hslActiveSwatch.style.background = chMeta.color;
+
+    els.hslHue.value = String(cur.h || 0);
+    els.hslSat.value = String(cur.s || 0);
+    els.hslLum.value = String(cur.l || 0);
+    els.valHslHue.textContent = cur.h > 0 ? `+${cur.h}` : String(cur.h || 0);
+    els.valHslSat.textContent = cur.s > 0 ? `+${cur.s}` : String(cur.s || 0);
+    els.valHslLum.textContent = cur.l > 0 ? `+${cur.l}` : String(cur.l || 0);
+
+    els.hslSwatches.querySelectorAll('.hsl-swatch-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.hslId === activeHslChannel);
+    });
+    updateHslDots();
+  }
+
+  function updateHslDots() {
+    if (!els.hslSwatches || !state.hsl) return;
+    els.hslSwatches.querySelectorAll('.hsl-swatch-btn').forEach((btn) => {
+      const vals = state.hsl[btn.dataset.hslId];
+      const mod = vals && (Math.abs(vals.h) > 0 || Math.abs(vals.s) > 0 || Math.abs(vals.l) > 0);
+      btn.classList.toggle('modified', Boolean(mod));
+    });
+  }
+
   function formatSliderValue(key, v) {
+    if (key === 'exposure') {
+      const ev = v / 50;
+      return (ev > 0 ? '+' : '') + ev.toFixed(2) + ' EV';
+    }
     if (key === 'blur') return v.toFixed(1);
-    return (v > 0 && P.SLIDER_GROUPS.light.concat(P.SLIDER_GROUPS.color).some((s) => s.key === key))
-      ? `+${v}`
-      : String(v);
+    const signedKeys = ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'temperature', 'tint', 'vibrance', 'saturation', 'clarity', 'dehaze', 'vignette'];
+    return v > 0 && signedKeys.includes(key) ? `+${v}` : String(v);
   }
 
   function buildPresetCards() {
@@ -416,6 +549,7 @@
       btn.type = 'button';
       btn.className = 'preset-card' + (preset.id === state.presetId ? ' active' : '');
       btn.dataset.presetId = preset.id;
+      btn.dataset.cat = preset.cat || 'all';
 
       const thumbWrap = document.createElement('div');
       thumbWrap.className = 'preset-thumb-wrap';
@@ -423,6 +557,13 @@
       thumbCanvas.width = 240;
       thumbCanvas.height = 160;
       thumbWrap.appendChild(thumbCanvas);
+
+      if (preset.badge) {
+        const badge = document.createElement('span');
+        badge.className = 'preset-vip-badge';
+        badge.textContent = preset.badge;
+        thumbWrap.appendChild(badge);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'preset-meta';
@@ -432,7 +573,10 @@
       btn.appendChild(meta);
 
       btn.addEventListener('click', () => {
-        if (!sourceImage) return;
+        if (!sourceImage) {
+          showToast('Hãy mở ảnh hoặc chọn Ảnh mẫu để áp dụng bộ lọc');
+          return;
+        }
         state.presetId = preset.id;
         syncControlsFromState();
         pushHistory();
@@ -441,16 +585,26 @@
 
       els.presetGrid.appendChild(btn);
     });
+    filterPresetCards();
   }
 
-  function generatePresetThumbnails() {
-    if (!sourceImage) return;
+  function filterPresetCards() {
+    els.presetGrid.querySelectorAll('.preset-card').forEach((card) => {
+      const id = card.dataset.presetId;
+      const cat = card.dataset.cat;
+      const show = activePresetCat === 'all' || id === 'original' || cat === activePresetCat;
+      card.classList.toggle('hidden', !show);
+    });
+  }
 
-    // Create center-cropped 240x160 thumbnail canvas from sourceImage
+  function generatePresetThumbnails(customSource) {
+    const src = customSource || sourceImage;
+    if (!src) return;
+
     const tw = 240;
     const th = 160;
-    const srcW = sourceImage.naturalWidth || sourceImage.width;
-    const srcH = sourceImage.naturalHeight || sourceImage.height;
+    const srcW = src.naturalWidth || src.width;
+    const srcH = src.naturalHeight || src.height;
     const srcAspect = srcW / srcH;
     const dstAspect = tw / th;
 
@@ -466,7 +620,7 @@
     const baseThumb = document.createElement('canvas');
     baseThumb.width = tw;
     baseThumb.height = th;
-    baseThumb.getContext('2d').drawImage(sourceImage, sx, sy, sw, sh, 0, 0, tw, th);
+    baseThumb.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, tw, th);
 
     const cards = els.presetGrid.querySelectorAll('.preset-card');
     cards.forEach((card) => {
@@ -516,9 +670,10 @@
       p.classList.toggle('active', p.dataset.frame === state.frame.style);
     });
 
-    // Sync mobile single-slider dock
+    // Sync mobile single-slider dock & HSL mixer
     selectMobileTool(activeMobileTool);
     updateMobileToolDots();
+    syncHslControls();
   }
 
   // --- Image Loading ---
@@ -552,7 +707,8 @@
       els.exportOpenBtn,
       els.applyCropBtn,
       els.resetCropBtn,
-    ].forEach((b) => (b.disabled = false));
+      els.autoEnhanceBtn,
+    ].forEach((b) => { if (b) b.disabled = false; });
 
     els.splitToggleBtn.classList.remove('active');
     if (els.mobileSplitBtn) els.mobileSplitBtn.classList.remove('active');
@@ -619,8 +775,9 @@
     }
 
     const needOrig = (splitCompare || holdingOriginal) && !inCropMode;
+    const dynamicMaxDim = window.innerWidth <= 780 ? 960 : 1280;
     const result = P.renderPipeline(sourceImage, renderState, {
-      maxDim: PREVIEW_MAX_DIM,
+      maxDim: dynamicMaxDim,
       needOriginal: needOrig,
       includeFrame: !inCropMode,
     });
@@ -1227,6 +1384,43 @@
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
 
+    // Preset category filter pills
+    if (els.presetCatPills) {
+      els.presetCatPills.querySelectorAll('.pill').forEach((pill) => {
+        pill.addEventListener('click', () => {
+          els.presetCatPills.querySelectorAll('.pill').forEach((p) => p.classList.remove('active'));
+          pill.classList.add('active');
+          activePresetCat = pill.dataset.cat || 'all';
+          filterPresetCards();
+        });
+      });
+    }
+
+    // Adjust sub-mode switch (Basic vs HSL 8-Color Mixer)
+    if (els.adjustModeTabs) {
+      els.adjustModeTabs.querySelectorAll('.seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.adjmode;
+          els.adjustModeTabs.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
+          els.adjPaneBasic.classList.toggle('active', mode === 'basic');
+          els.adjPaneHsl.classList.toggle('active', mode === 'hsl');
+        });
+      });
+    }
+
+    // Auto Enhance 1-tap VIP
+    if (els.autoEnhanceBtn) {
+      els.autoEnhanceBtn.addEventListener('click', () => {
+        if (!sourceImage) return;
+        const autoVals = P.analyzeAutoEnhance(sourceImage);
+        Object.assign(state.adjustments, autoVals);
+        syncControlsFromState();
+        pushHistory();
+        scheduleRender();
+        showToast('Đã tự động cân bằng ánh sáng & màu chuẩn');
+      });
+    }
+
     // Preset strength
     els.presetStrength.addEventListener('input', () => {
       state.presetStrength = parseInt(els.presetStrength.value, 10);
@@ -1380,10 +1574,13 @@
 
   // --- Init ---
   buildAdjustmentSliders();
+  buildHslMixer();
   buildPresetCards();
   initSplitHandle();
   initCropInteractions();
   initPanZoom();
   bindEvents();
   P.drawHistogram(null, els.histogramCanvas);
+  // Pre-render gorgeous sample thumbnails on preset cards immediately (no empty black boxes!)
+  generatePresetThumbnails(P.generateSampleImage('mountain'));
 })();
