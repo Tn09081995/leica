@@ -1,10 +1,7 @@
 (function (global) {
   'use strict';
 
-  const GEMINI_ENDPOINTS = [
-    'https://generativelanguage.googleapis.com/v1beta/interactions',
-    'https://generativelanguage.googleapis.com/v1/interactions',
-  ];
+  const GEMINI_V1BETA_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
   const MODEL_COLOR_AI = 'gemini-4-hydrogen';
   const MODEL_COLOR_FALLBACKS = ['gemini-4-hydrogen', 'gemini-3.5-flash-lite'];
   const MODEL_IMAGE_AI = 'gemini-nano-banana-2.1';
@@ -54,24 +51,38 @@
   }
 
   /**
-   * Detects whether a prompt asks for true generative pixel edits (remove objects/people, replace background,
-   * change outfit, add objects, redraw style) — carefully excluding local effects like "xóa phông / mờ nền".
+   * Detects whether a prompt asks for true generative pixel edits (remove any object/jewelry/person/blemish,
+   * replace background, change outfit/hair/expression, add objects, transform art style),
+   * while keeping local color/bokeh/frame adjustments in fast color mode.
    */
   function looksLikeGenerativeEdit(prompt) {
     const t = normalizeVi(prompt);
-    if (hasAny(t, ['xoa phong', 'mo nen', 'mo hau canh', 'lam mo nen', 'bokeh'])) {
-      // Portrait background blur works locally without generative redraw!
-      if (!hasAny(t, ['doi nen', 'thay nen', 'xoa nguoi', 'xoa vat', 'tach nen'])) {
-        return false;
+
+    // Explicitly local-only operations (do NOT require generative pixel redraw)
+    const isOnlyLocalBlur = hasAny(t, ['xoa phong', 'mo nen', 'mo hau canh', 'lam mo nen', 'bokeh']);
+    const isOnlyResetOrFrame = hasAny(t, ['xoa khung', 'bo khung', 'xoa het chinh', 'dat lai', 've goc']);
+
+    // Generic removal verbs: "xóa dây chuyền", "xóa người", "xóa mụn", "bỏ đồng hồ", "gỡ kính", "che logo"...
+    if (!isOnlyLocalBlur && !isOnlyResetOrFrame) {
+      if (/(^|\s)(xoa|bo di|go bo|loai bo|cat bo|tay |che di|remove|erase|delete)\b/.test(t)) {
+        return true;
       }
     }
+
+    // Adding non-color objects/elements (exclude "sáng thêm", "ấm thêm", "thêm khung", "thêm hạt phim", "thêm hồng")
+    if (/(^|\s)(them|ve them|ghep|dat them|add)\s+/.test(t)) {
+      if (!hasAny(t, ['them khung', 'them hat phim', 'them hong', 'them am', 'them sang', 'them net', 'them tuong phan', 'them chut'])) {
+        return true;
+      }
+    }
+
+    // Replacing/changing objects, backgrounds, outfits, hair, faces, artistic redraws
     return hasAny(t, [
-      'xoa nguoi', 'xoa vat', 'xoa nen', 'tach nen', 'doi nen', 'thay nen', 'xoa rac', 'xoa chi tiet',
-      'xoa chu', 'xoa logo', 'xoa day dien', 'xoa mun', 'xoa kinh',
-      'them may', 'them nang', 'them tuyet', 'them mua', 'them hoa', 'them nguoi', 'them bau troi',
-      'doi ao', 'doi vay', 'doi quan', 'doi trang phuc', 'doi toc', 'mac ao', 'trang diem', 'cuoi len',
-      'bien thanh', 'tranh ve', 'anime', 'hoat hinh', 'son dau', 'phac hoa', 'cyberpunk', 'ghibli',
-      'remove', 'erase', 'replace background', 'change background', 'add ', 'outfit', 'inpaint',
+      'tach nen', 'doi nen', 'thay nen', 'doi phong nen', 'thay phong', 'doi canh',
+      'doi ao', 'doi vay', 'doi quan', 'doi trang phuc', 'mac ao', 'mac vay', 'thay ao', 'thay do',
+      'doi toc', 'kieu toc', 'doi mat', 'doi mu', 'deo kinh', 'trang diem', 'cuoi len', 'mim cuoi',
+      'bien thanh', 'chuyen thanh', 'tranh ve', 'anime', 'hoat hinh', 'son dau', 'phac hoa', 'cyberpunk', 'ghibli', '3d',
+      'replace ', 'change background', 'change outfit', 'turn into', 'inpaint',
     ]);
   }
 
@@ -521,9 +532,8 @@
   }
 
   /**
-   * Calls Gemini Interactions API using official x-goog-api-key auth (supports both AQ.* auth keys and AIza.* keys).
-   * Uses local /api/gemini proxy automatically when running on localhost to eliminate any browser CORS issues,
-   * and falls back cleanly to direct HTTPS calls (with x-goog-api-key header, then ?key=) on GitHub Pages.
+   * Calls Gemini Interactions API strictly on v1beta (required for multimodal `type: "image"` inputs).
+   * Uses local /api/gemini proxy on localhost (zero CORS issues), and direct v1beta HTTPS on GitHub Pages.
    */
   async function callGeminiInteractions(apiKey, body) {
     const attempts = [];
@@ -534,34 +544,24 @@
         headers: {
           'Content-Type': 'application/json',
           'x-goog-api-key': apiKey,
-          'x-gemini-api-version': 'v1beta',
-        },
-      });
-      attempts.push({
-        url: '/api/gemini',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-          'x-gemini-api-version': 'v1',
         },
       });
     }
 
-    for (const base of GEMINI_ENDPOINTS) {
-      attempts.push({
-        url: base,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-      });
-      attempts.push({
-        url: `${base}?key=${encodeURIComponent(apiKey)}`,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-    }
+    // Direct v1beta HTTPS calls (for GitHub Pages / static hosting)
+    attempts.push({
+      url: GEMINI_V1BETA_URL,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+    });
+    attempts.push({
+      url: `${GEMINI_V1BETA_URL}?key=${encodeURIComponent(apiKey)}`,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
 
     let lastError = null;
     for (let i = 0; i < attempts.length; i++) {
@@ -578,18 +578,19 @@
         }
         const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
         lastError = new Error(msg);
-        // Stop retrying endpoints on definitive auth/billing/quota errors (401/403/429)
-        if (res.status === 401 || res.status === 403 || res.status === 429) {
+        // Stop retrying transport on definitive API errors (400/401/403/404/429)
+        if (res.status >= 400 && res.status < 500) {
           throw lastError;
         }
       } catch (err) {
         lastError = err;
-        if (err && /API key|quota|billing|permission|403|401|429/i.test(err.message || '')) {
+        // Only continue to next transport if this was a network/CORS failure (TypeError)
+        if (!(err instanceof TypeError)) {
           throw err;
         }
       }
     }
-    throw lastError || new Error('Không thể kết nối tới Google Gemini API');
+    throw lastError || new Error('Không thể kết nối tới Google Gemini API (v1beta)');
   }
 
   /**

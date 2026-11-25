@@ -49,12 +49,13 @@ function proxyGemini(req, res) {
     const upstream = https.request(
       {
         hostname: 'generativelanguage.googleapis.com',
-        path: `/${apiVer}/interactions`,
+        path: '/v1beta/interactions',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': bodyBuf.length,
           'x-goog-api-key': apiKey,
+          'Api-Revision': '2026-05-20',
         },
       },
       (upRes) => {
@@ -104,7 +105,10 @@ const server = http.createServer((req, res) => {
       return;
     }
     const ext = path.extname(fullPath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+    });
     res.end(data);
   });
 });
