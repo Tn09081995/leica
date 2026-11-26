@@ -23,6 +23,7 @@
     themeToggleBtn: document.getElementById('themeToggleBtn'),
     themeIconMoon: document.getElementById('themeIconMoon'),
     themeIconSun: document.getElementById('themeIconSun'),
+    toolsToggleBtn: document.getElementById('toolsToggleBtn'),
     resetAllBtn: document.getElementById('resetAllBtn'),
     exportOpenBtn: document.getElementById('exportOpenBtn'),
 
@@ -200,6 +201,7 @@
   let eraserBrushPx = 22;
 
   // View / UI transient state
+  let toolsOpen = false; // Default ultra-clean AI-Chat-only mode
   let activeTab = 'presets';
   let splitCompare = false;
   let splitRatio = 0.5;
@@ -992,6 +994,9 @@
     syncControlsFromState();
     pushHistory();
     generatePresetThumbnails();
+    if (!toolsOpen && window.innerWidth >= 920 && !aiChatOpen) {
+      openAiChat();
+    }
     renderNow();
     updateCropOverlayVisibility();
     showToast(`Đã mở ảnh: ${name || 'Ảnh mẫu'}`);
@@ -1111,11 +1116,13 @@
   function fitCanvasToViewport() {
     if (!sourceImage) return;
     const stageRect = els.stageContainer.getBoundingClientRect();
-    const isMobile = window.innerWidth <= 780;
-    const padW = isMobile ? 24 : 48;
-    const padH = isMobile ? 58 : 68;
-    const availW = Math.max(120, stageRect.width - padW);
-    const availH = Math.max(120, stageRect.height - padH);
+    const cs = window.getComputedStyle(els.stageContainer);
+    const padL = parseFloat(cs.paddingLeft) || 16;
+    const padR = parseFloat(cs.paddingRight) || 16;
+    const padT = parseFloat(cs.paddingTop) || 16;
+    const padB = parseFloat(cs.paddingBottom) || 16;
+    const availW = Math.max(120, stageRect.width - padL - padR);
+    const availH = Math.max(120, stageRect.height - padT - padB);
 
     const cw = els.previewCanvas.width || 1;
     const ch = els.previewCanvas.height || 1;
@@ -1130,6 +1137,7 @@
     els.canvasWrapper.style.height = `${displayH}px`;
 
     applyZoomTransform();
+    updateEraserOverlayVisibility();
   }
 
   function applyZoomTransform() {
@@ -1884,6 +1892,13 @@
       }, { passive: false });
     });
 
+    if (els.toolsToggleBtn) {
+      els.toolsToggleBtn.addEventListener('click', () => {
+        setToolsOpen(!toolsOpen);
+        showToast(toolsOpen ? 'Đã mở rộng công cụ chỉnh tay' : 'Đã thu gọn — chỉ giữ AI Chat');
+      });
+    }
+
     bindAiEvents();
   }
 
@@ -1898,20 +1913,44 @@
     }
   }
 
+  function setToolsOpen(open) {
+    toolsOpen = Boolean(open);
+    document.body.classList.toggle('tools-open', toolsOpen);
+    if (els.toolsToggleBtn) {
+      els.toolsToggleBtn.classList.toggle('active', toolsOpen);
+      els.toolsToggleBtn.setAttribute('aria-expanded', toolsOpen ? 'true' : 'false');
+    }
+    // If collapsing manual tools while on Crop tab, exit crop overlay cleanly
+    if (!toolsOpen && activeTab === 'crop') {
+      switchTab('presets');
+    }
+    if (sourceImage) {
+      requestAnimationFrame(() => fitCanvasToViewport());
+    }
+  }
+
   function openAiChat() {
     if (!els.aiChatWindow) return;
     if (eraserActive) setEraserMode(false, false);
     aiChatOpen = true;
+    document.body.classList.add('ai-chat-open');
     els.aiChatWindow.classList.remove('hidden');
     if (els.aiFab) els.aiFab.classList.add('open');
+    if (sourceImage) {
+      requestAnimationFrame(() => fitCanvasToViewport());
+    }
     scrollChatToBottom();
   }
 
   function closeAiChat() {
     if (!els.aiChatWindow) return;
     aiChatOpen = false;
+    document.body.classList.remove('ai-chat-open');
     els.aiChatWindow.classList.add('hidden');
     if (els.aiFab && !eraserActive) els.aiFab.classList.remove('open');
+    if (sourceImage) {
+      requestAnimationFrame(() => fitCanvasToViewport());
+    }
   }
 
   function setEraserMode(active, reopenChat) {
@@ -1923,6 +1962,7 @@
     if (els.aiEraseFloat) els.aiEraseFloat.classList.toggle('hidden', !eraserActive);
     if (eraserActive) {
       aiChatOpen = false;
+      document.body.classList.remove('ai-chat-open');
       if (els.aiChatWindow) els.aiChatWindow.classList.add('hidden');
       if (els.aiFab) els.aiFab.classList.add('open');
       if (splitCompare) {

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=12" />
 </head>
 <body>
   <div class="app-shell">
@@ -27,7 +27,7 @@
         </label>
         <input type="file" id="fileInput" accept="image/*" hidden />
 
-        <div class="dropdown-wrap">
+        <div class="dropdown-wrap manual-only-control">
           <button class="btn btn-ghost btn-sample" id="sampleMenuBtn" type="button" title="Tải ảnh mẫu để trải nghiệm">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span class="btn-label">Ảnh mẫu</span>
@@ -62,9 +62,9 @@
           </button>
         </div>
 
-        <div class="divider-v hide-mobile"></div>
+        <div class="divider-v hide-mobile manual-only-control"></div>
 
-        <div class="zoom-controls hide-mobile">
+        <div class="zoom-controls hide-mobile manual-only-control">
           <button class="btn btn-icon btn-sm" id="zoomOutBtn" type="button" title="Thu nhỏ (-)" disabled>−</button>
           <button class="btn btn-ghost btn-sm mono" id="zoomResetBtn" type="button" title="Vừa khung hình (0)" disabled>100%</button>
           <button class="btn btn-icon btn-sm" id="zoomInBtn" type="button" title="Phóng to (+)" disabled>+</button>
@@ -72,6 +72,10 @@
       </div>
 
       <div class="topbar-right">
+        <button class="btn btn-ghost btn-tools-toggle" id="toolsToggleBtn" type="button" title="Mở rộng / thu gọn công cụ chỉnh tay (Bộ lọc, Chỉnh màu, Cắt, Khung)" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span class="btn-label">Công cụ</span>
+        </button>
         <button class="btn btn-icon" id="themeToggleBtn" type="button" title="Chuyển chế độ Sáng / Phòng tối" aria-label="Chuyển chế độ giao diện">
           <svg id="themeIconMoon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="themeIconSun" class="hidden" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -642,8 +646,8 @@
   <!-- Toast notification -->
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="processor.js?v=10"></script>
-  <script src="ai-assistant.js?v=10"></script>
-  <script src="app.js?v=10"></script>
+  <script src="processor.js?v=11"></script>
+  <script src="ai-assistant.js?v=11"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>
