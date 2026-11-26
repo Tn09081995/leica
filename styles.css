@@ -113,58 +113,6 @@ html, body {
   display: none !important;
 }
 
-/* =========================================================
-   ULTRA-CLEAN AI-ONLY MODE (DEFAULT)
-   All manual panels, stage pills & zoom stay neatly tucked
-   behind the topbar "Công cụ" toggle until expanded.
-   ========================================================= */
-body:not(.tools-open) .inspector,
-body:not(.tools-open) .mobile-stage-bar,
-body:not(.tools-open) .manual-only-control {
-  display: none !important;
-}
-
-body:not(.tools-open) .stage-container {
-  padding: 20px 24px;
-}
-
-.btn-tools-toggle {
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  padding: 0 12px;
-}
-
-.btn-tools-toggle:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.btn-tools-toggle.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-@media (min-width: 920px) {
-  body.ai-chat-open:not(.tools-open) .stage-container {
-    padding-right: 432px;
-  }
-
-  body.ai-chat-open:not(.tools-open) .ai-chat-window {
-    top: calc(var(--topbar-h) + 16px);
-    right: 18px;
-    bottom: 18px;
-    width: 396px;
-    height: auto;
-  }
-
-  body.ai-chat-open:not(.tools-open) .toast {
-    left: calc((100vw - 414px) / 2);
-  }
-}
-
 /* App Shell */
 .app-shell {
   display: flex;
@@ -921,13 +869,13 @@ body.has-image:not([data-theme="dark"]) .inspector {
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.85);
 }
 
-/* Unified Floating AI Chat Popover Window */
+/* Compact Streamlined Floating AI Chat Popover Window */
 .ai-chat-window {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  width: min(410px, calc(100vw - 24px));
-  height: min(540px, calc(100dvh - 84px));
+  width: min(376px, calc(100vw - 24px));
+  height: min(440px, calc(100dvh - 96px));
   z-index: 70;
   background: var(--bg-panel-solid);
   border: 1px solid var(--border);
@@ -1001,6 +949,65 @@ body.has-image:not([data-theme="dark"]) .inspector {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+/* Compact ⋯ Dropdown for collapsed extra AI actions */
+.ai-more-wrap {
+  position: relative;
+}
+
+.ai-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 210px;
+  background: var(--bg-panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 5px;
+  box-shadow: 0 16px 40px rgba(8, 24, 20, 0.32);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 85;
+  animation: aiWinIn 0.14s ease;
+}
+
+.ai-more-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.ai-more-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.ai-more-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ai-more-item.danger {
+  color: #e05246;
+}
+
+.ai-more-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 6px;
 }
 
 .ai-tools-toolbar {
@@ -2311,9 +2318,9 @@ input[type="range"]:not(.pro-slider-native)::-webkit-slider-thumb {
   to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* On medium desktop screens (<= 1120px), float AI bubble cleanly above the bottom dock when expanded */
+/* On medium desktop screens (<= 1120px), float AI bubble cleanly above the bottom dock */
 @media (max-width: 1120px) {
-  body.tools-open.has-image .ai-fab {
+  body.has-image .ai-fab {
     right: 16px;
     bottom: 274px;
   }
@@ -2359,8 +2366,7 @@ input[type="range"]:not(.pro-slider-native)::-webkit-slider-thumb {
   }
 
   .btn-upload,
-  .btn-sample,
-  .btn-tools-toggle {
+  .btn-sample {
     width: 36px;
     height: 36px;
     padding: 0;
@@ -2368,8 +2374,7 @@ input[type="range"]:not(.pro-slider-native)::-webkit-slider-thumb {
   }
 
   .btn-upload .btn-label,
-  .btn-sample .btn-label,
-  .btn-tools-toggle .btn-label {
+  .btn-sample .btn-label {
     display: none;
   }
 
@@ -2462,7 +2467,7 @@ input[type="range"]:not(.pro-slider-native)::-webkit-slider-thumb {
     bottom: calc(16px + env(safe-area-inset-bottom));
   }
 
-  body.tools-open.has-image .ai-fab {
+  body.has-image .ai-fab {
     bottom: 242px;
   }
 

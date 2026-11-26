@@ -23,7 +23,6 @@
     themeToggleBtn: document.getElementById('themeToggleBtn'),
     themeIconMoon: document.getElementById('themeIconMoon'),
     themeIconSun: document.getElementById('themeIconSun'),
-    toolsToggleBtn: document.getElementById('toolsToggleBtn'),
     resetAllBtn: document.getElementById('resetAllBtn'),
     exportOpenBtn: document.getElementById('exportOpenBtn'),
 
@@ -119,11 +118,14 @@
 
     toast: document.getElementById('toast'),
 
-    // Floating AI Chat Bubble & Unified Assistant elements
+    // Floating AI Chat Bubble & Streamlined Assistant elements
     aiFab: document.getElementById('aiFab'),
     aiFabDot: document.getElementById('aiFabDot'),
     aiChatWindow: document.getElementById('aiChatWindow'),
     aiChatCloseBtn: document.getElementById('aiChatCloseBtn'),
+    aiMoreBtn: document.getElementById('aiMoreBtn'),
+    aiMoreMenu: document.getElementById('aiMoreMenu'),
+    aiToggleChipsBtn: document.getElementById('aiToggleChipsBtn'),
     aiChatClearBtn: document.getElementById('aiChatClearBtn'),
     aiChatFeed: document.getElementById('aiChatFeed'),
     aiModeTabs: document.getElementById('aiModeTabs'),
@@ -201,7 +203,6 @@
   let eraserBrushPx = 22;
 
   // View / UI transient state
-  let toolsOpen = false; // Default ultra-clean AI-Chat-only mode
   let activeTab = 'presets';
   let splitCompare = false;
   let splitRatio = 0.5;
@@ -994,9 +995,6 @@
     syncControlsFromState();
     pushHistory();
     generatePresetThumbnails();
-    if (!toolsOpen && window.innerWidth >= 920 && !aiChatOpen) {
-      openAiChat();
-    }
     renderNow();
     updateCropOverlayVisibility();
     showToast(`Đã mở ảnh: ${name || 'Ảnh mẫu'}`);
@@ -1892,13 +1890,6 @@
       }, { passive: false });
     });
 
-    if (els.toolsToggleBtn) {
-      els.toolsToggleBtn.addEventListener('click', () => {
-        setToolsOpen(!toolsOpen);
-        showToast(toolsOpen ? 'Đã mở rộng công cụ chỉnh tay' : 'Đã thu gọn — chỉ giữ AI Chat');
-      });
-    }
-
     bindAiEvents();
   }
 
@@ -1913,44 +1904,26 @@
     }
   }
 
-  function setToolsOpen(open) {
-    toolsOpen = Boolean(open);
-    document.body.classList.toggle('tools-open', toolsOpen);
-    if (els.toolsToggleBtn) {
-      els.toolsToggleBtn.classList.toggle('active', toolsOpen);
-      els.toolsToggleBtn.setAttribute('aria-expanded', toolsOpen ? 'true' : 'false');
-    }
-    // If collapsing manual tools while on Crop tab, exit crop overlay cleanly
-    if (!toolsOpen && activeTab === 'crop') {
-      switchTab('presets');
-    }
-    if (sourceImage) {
-      requestAnimationFrame(() => fitCanvasToViewport());
-    }
+  function closeAiMoreMenu() {
+    if (els.aiMoreMenu) els.aiMoreMenu.classList.add('hidden');
+    if (els.aiMoreBtn) els.aiMoreBtn.setAttribute('aria-expanded', 'false');
   }
 
   function openAiChat() {
     if (!els.aiChatWindow) return;
     if (eraserActive) setEraserMode(false, false);
     aiChatOpen = true;
-    document.body.classList.add('ai-chat-open');
     els.aiChatWindow.classList.remove('hidden');
     if (els.aiFab) els.aiFab.classList.add('open');
-    if (sourceImage) {
-      requestAnimationFrame(() => fitCanvasToViewport());
-    }
     scrollChatToBottom();
   }
 
   function closeAiChat() {
     if (!els.aiChatWindow) return;
+    closeAiMoreMenu();
     aiChatOpen = false;
-    document.body.classList.remove('ai-chat-open');
     els.aiChatWindow.classList.add('hidden');
     if (els.aiFab && !eraserActive) els.aiFab.classList.remove('open');
-    if (sourceImage) {
-      requestAnimationFrame(() => fitCanvasToViewport());
-    }
   }
 
   function setEraserMode(active, reopenChat) {
@@ -2496,7 +2469,7 @@
 
     const apiKey = AI.getApiKey();
     const wantsGen = AI.looksLikeGenerativeEdit(prompt);
-    const useGenerative = forceGenerative || aiMode === 'generative' || (Boolean(apiKey) && wantsGen);
+    const useGenerative = Boolean(forceGenerative) || wantsGen;
 
     // Generative / Object Removal / Regional Editing Mode
     if (useGenerative) {
@@ -2719,8 +2692,34 @@
       els.aiChatCloseBtn.addEventListener('click', closeAiChat);
     }
 
+    if (els.aiMoreBtn && els.aiMoreMenu) {
+      els.aiMoreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isHidden = els.aiMoreMenu.classList.toggle('hidden');
+        els.aiMoreBtn.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
+      });
+      document.addEventListener('click', (e) => {
+        if (!els.aiMoreMenu.classList.contains('hidden') && !els.aiMoreMenu.contains(e.target) && e.target !== els.aiMoreBtn) {
+          closeAiMoreMenu();
+        }
+      });
+    }
+
+    if (els.aiToggleChipsBtn && els.aiQuickChips) {
+      els.aiToggleChipsBtn.addEventListener('click', () => {
+        const nowHidden = els.aiQuickChips.classList.toggle('hidden');
+        closeAiMoreMenu();
+        showToast(nowHidden ? 'Đã ẩn gợi ý nhanh' : 'Đã hiện gợi ý nhanh');
+      });
+    }
+
+    if (els.autoEnhanceBtn) {
+      els.autoEnhanceBtn.addEventListener('click', () => closeAiMoreMenu());
+    }
+
     if (els.aiChatClearBtn) {
       els.aiChatClearBtn.addEventListener('click', () => {
+        closeAiMoreMenu();
         if (!els.aiChatFeed) return;
         els.aiChatFeed.innerHTML = '';
         appendChatMsg('ai', 'Đã xóa lịch sử trò chuyện. Hãy nhắn hoặc nói yêu cầu sửa ảnh tiếp theo nhé!');
@@ -2728,7 +2727,10 @@
     }
 
     if (els.aiOpenEraserBtn) {
-      els.aiOpenEraserBtn.addEventListener('click', () => setEraserMode(true, false));
+      els.aiOpenEraserBtn.addEventListener('click', () => {
+        closeAiMoreMenu();
+        setEraserMode(true, false);
+      });
     }
 
     if (els.aiModeTabs) {

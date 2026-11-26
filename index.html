@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <link rel="stylesheet" href="styles.css?v=13" />
 </head>
 <body>
   <div class="app-shell">
@@ -27,7 +27,7 @@
         </label>
         <input type="file" id="fileInput" accept="image/*" hidden />
 
-        <div class="dropdown-wrap manual-only-control">
+        <div class="dropdown-wrap">
           <button class="btn btn-ghost btn-sample" id="sampleMenuBtn" type="button" title="Tải ảnh mẫu để trải nghiệm">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span class="btn-label">Ảnh mẫu</span>
@@ -62,9 +62,9 @@
           </button>
         </div>
 
-        <div class="divider-v hide-mobile manual-only-control"></div>
+        <div class="divider-v hide-mobile"></div>
 
-        <div class="zoom-controls hide-mobile manual-only-control">
+        <div class="zoom-controls hide-mobile">
           <button class="btn btn-icon btn-sm" id="zoomOutBtn" type="button" title="Thu nhỏ (-)" disabled>−</button>
           <button class="btn btn-ghost btn-sm mono" id="zoomResetBtn" type="button" title="Vừa khung hình (0)" disabled>100%</button>
           <button class="btn btn-icon btn-sm" id="zoomInBtn" type="button" title="Phóng to (+)" disabled>+</button>
@@ -72,10 +72,6 @@
       </div>
 
       <div class="topbar-right">
-        <button class="btn btn-ghost btn-tools-toggle" id="toolsToggleBtn" type="button" title="Mở rộng / thu gọn công cụ chỉnh tay (Bộ lọc, Chỉnh màu, Cắt, Khung)" aria-expanded="false">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-          <span class="btn-label">Công cụ</span>
-        </button>
         <button class="btn btn-icon" id="themeToggleBtn" type="button" title="Chuyển chế độ Sáng / Phòng tối" aria-label="Chuyển chế độ giao diện">
           <svg id="themeIconMoon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="themeIconSun" class="hidden" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -528,14 +524,14 @@
     </div>
   </div>
 
-  <!-- Unified AI Chat Popover Window (All AI features live here!) -->
+  <!-- Clean Streamlined AI Chat Popover Window (extra AI tools tucked neatly in ⋯ menu!) -->
   <section class="ai-chat-window hidden" id="aiChatWindow" role="dialog" aria-label="Lumina AI Chat">
     <header class="ai-chat-header">
       <div class="ai-chat-brand">
         <span class="ai-chat-avatar" aria-hidden="true">✨</span>
         <div>
           <div class="ai-chat-title">Lumina AI Chat</div>
-          <div class="ai-chat-sub" id="aiChatStatusSub">Chỉnh màu • Xóa vật thể • 🎙️</div>
+          <div class="ai-chat-sub" id="aiChatStatusSub">Nhắn hoặc nói yêu cầu sửa ảnh</div>
         </div>
       </div>
       <div class="ai-chat-head-actions">
@@ -543,49 +539,47 @@
           <span class="ai-key-dot" id="aiKeyDot"></span>
           <span id="aiKeyLabel">Gemini API</span>
         </button>
-        <button type="button" class="btn btn-icon btn-sm" id="aiChatClearBtn" title="Xóa lịch sử chat" aria-label="Xóa lịch sử chat">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-        </button>
+        <div class="ai-more-wrap">
+          <button type="button" class="btn btn-icon btn-sm" id="aiMoreBtn" title="Chức năng AI mở rộng" aria-label="Chức năng AI mở rộng" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </button>
+          <div class="ai-more-menu hidden" id="aiMoreMenu">
+            <button type="button" class="ai-more-item" id="autoEnhanceBtn" disabled>
+              <span>✨ Tự động làm đẹp 1 chạm</span>
+            </button>
+            <button type="button" class="ai-more-item" id="aiOpenEraserBtn">
+              <span>🪄 Cọ tẩy vật thể thủ công</span>
+            </button>
+            <button type="button" class="ai-more-item" id="aiToggleChipsBtn">
+              <span>💡 Hiện / ẩn gợi ý nhanh</span>
+            </button>
+            <div class="ai-more-divider"></div>
+            <button type="button" class="ai-more-item danger" id="aiChatClearBtn">
+              <span>🗑 Xóa lịch sử hội thoại</span>
+            </button>
+          </div>
+        </div>
         <button type="button" class="btn btn-icon btn-sm" id="aiChatCloseBtn" title="Thu nhỏ thành bong bóng" aria-label="Đóng">✕</button>
       </div>
     </header>
-
-    <!-- All-in-one AI Tools Bar -->
-    <div class="ai-tools-toolbar">
-      <div class="segmented-control" id="aiModeTabs">
-        <button type="button" class="seg-btn active" data-aimode="color">Chỉnh màu</button>
-        <button type="button" class="seg-btn" data-aimode="generative">Sửa / Xóa AI</button>
-      </div>
-      <div class="ai-toolbar-right">
-        <button type="button" class="btn btn-auto-vip btn-xs" id="autoEnhanceBtn" title="AI Tự động cân bằng đẹp 1 chạm" disabled>
-          ✨ Tự động
-        </button>
-        <button type="button" class="btn btn-secondary btn-xs" id="aiOpenEraserBtn" title="Mở cọ tô xóa vật thể thủ công miễn phí">
-          🪄 Cọ tẩy
-        </button>
-      </div>
-    </div>
 
     <!-- Scrollable Conversational Chat Feed -->
     <div class="ai-chat-feed" id="aiChatFeed">
       <div class="chat-msg chat-msg-ai">
         <div class="chat-bubble">
-          Xin chào! Hãy nhắn hoặc bấm <strong>🎙️ nói yêu cầu</strong> để tôi sửa ảnh ngay cho bạn — ví dụ: <em>"xoá dây chuyền trên cổ"</em>, <em>"trắng hồng da kiểu Hàn Quốc"</em>, <em>"xóa phông nền"</em>, <em>"màu Leica cổ điển"</em>.
+          Xin chào! Bạn chỉ cần nhắn hoặc bấm <strong>🎙️ nói yêu cầu</strong> — tôi sẽ tự động chỉnh màu, xóa vật thể hay làm đẹp ảnh ngay cho bạn.
         </div>
       </div>
     </div>
 
-    <!-- Quick Prompt Chips -->
-    <div class="ai-chips ai-chips-window" id="aiQuickChips">
+    <!-- Collapsible Quick Prompt Chips (hidden by default for an ultra-clean chat!) -->
+    <div class="ai-chips ai-chips-window hidden" id="aiQuickChips">
       <button type="button" class="ai-chip" data-prompt="Đẹp tự nhiên, cân bằng sáng và màu chuẩn">✨ Đẹp tự nhiên</button>
       <button type="button" class="ai-chip" data-prompt="Xóa phông làm mờ nền nhẹ và tôn da sáng hồng">🫧 Xóa phông</button>
       <button type="button" class="ai-chip" data-prompt="Chỉnh màu Hàn Quốc trong trẻo, trắng hồng da nhẹ nhàng">🌸 Hàn Quốc</button>
       <button type="button" class="ai-chip" data-prompt="Chỉnh màu Leica Chrome tương phản sâu, ấm nhẹ">🎞️ Leica Chrome</button>
       <button type="button" class="ai-chip" data-prompt="Cứu ảnh ngược sáng bị tối, nâng vùng tối và làm sắc nét">☁️ Cứu ảnh tối</button>
       <button type="button" class="ai-chip" data-prompt="Làm bầu trời xanh sâu hơn và lá cây xanh tươi sống động">🌊 Trời & cây</button>
-      <button type="button" class="ai-chip" data-prompt="Tông nắng vàng ấm áp, ánh sáng mơ màng">🌅 Nắng vàng</button>
-      <button type="button" class="ai-chip" data-prompt="Chỉnh đen trắng nghệ thuật Leica Monochrom tương phản sâu">🖤 Đen trắng</button>
-      <button type="button" class="ai-chip" data-prompt="Cắt vuông 1:1 và thêm khung Polaroid">🖼️ Polaroid</button>
       <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Xóa dây chuyền trên cổ">🪄 Xóa dây chuyền</button>
       <button type="button" class="ai-chip ai-chip-gen" data-gen="true" data-prompt="Xóa các vật thể thừa gây rối ở hậu cảnh">🪄 Xóa vật thừa</button>
     </div>
@@ -646,8 +640,8 @@
   <!-- Toast notification -->
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="processor.js?v=11"></script>
-  <script src="ai-assistant.js?v=11"></script>
-  <script src="app.js?v=11"></script>
+  <script src="processor.js?v=13"></script>
+  <script src="ai-assistant.js?v=13"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>
